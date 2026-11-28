@@ -64,7 +64,7 @@
 
 | 编号 | 已验收的行为 | 支持边界 | 交付提交与验证证据 |
 | --- | --- | --- | --- |
-| Agent-接续-1 | <a id="agent-接续-1"></a>指定旧任务号后经 Agent 原循环只读核对现状 | 首阶段覆盖面板 T03，旧任务原号与新工作号各自可追溯。新读数对照 `idle`、`focus` 及读口不可用。 | `app.task_resume` 从同一 SQLite 快照、用固定响应核对旧证据首包、当前读回续行和零变更，另验同名、跨档案、撤权及房间。[循环设计](../设计/Agent循环与上下文设计.md#任务接续) |
+| Agent-接续-1 | <a id="agent-接续-1"></a>指定旧任务号后经 Agent 原循环只读核对现状 | 首阶段覆盖面板 T03，旧任务原号与新工作号各自可追溯。新读数对照 `idle`、`focus` 及读口不可用。 | `app.task_resume` 从同一 SQLite 快照、用固定响应核对旧证据首包、当前读回续行和零变更，另验同名、跨档案、撤权及房间。`app.terminal_entry` 通过正式 CLI 和重启后的本体再次核对同名原件和新读回。[循环设计](../设计/Agent循环与上下文设计.md#任务接续) |
 | Agent-循环-0 | <a id="agent-循环-0"></a>建立普通决策、规划、修订和 MC 的固定输入基线 | 固定回放 7 份实际请求、1 次库存工具分派，分别定位授权排列、旧请求缺失库存回执和回复 Hook 后文本。隔离游戏另核对真实入包及玩家实收。 | `88e8945`，[请求与调用对照](../../modules/agent/tests/loop_projection.cpp) · [游戏端读回](../../tests/mc-companion/playtest-check.cjs) |
 | Agent-循环-1 | <a id="agent-循环-1"></a>同一冻结输入旁路比较有序工具、消息和首个差异 | 主会话与同一时刻一个 MC 绑定；比较不产生额外执行或玩家发言。 | `5015d70`，[工具排序](../../modules/agent/src/tool_catalog.cpp) · [固定投影](../../modules/agent/tests/loop_projection.cpp) |
 | Agent-循环-2 | <a id="agent-循环-2"></a>正式普通请求、计划和修订带入原库存、目标、步骤证据及实际送达文本 | 提议步骤零个可执行工具。Hook 改写后，以 SQLite 实际记录的可见答复供下轮引用。 | `fe6af78`、`669c478`，[规划与修订](../../modules/agent/tests/loop_projection.cpp) · [真实 DLL 与投递](../../tests/plugins/plugin_mailbox_dll.cpp) |

@@ -129,6 +129,8 @@ flowchart TB
 
 CLI 输入 `/resume 完整任务号 "本次希望确认的事"`。T03 的旧目标是 `idle`，动作后原回执读到 `focus`。宿主给首包旧任务证据和本次初始状态，并只授予当前已加载的固定面板读口。模型可请求一次读取。实际工作成功且已经退出时，第二份请求凭新读数将原目标标记为已满足或仍待处理。读口或绑定不可用时提供未知状态。该入口只开放读回，首阶段覆盖固定面板及 `idle`、`focus` 两种原目标。跨档案或已撤权的任务号在开始回合前拒绝。[T03 固定语料](../../apps/host/tests/memory_recall/tasks.jsonl#L3) · [续行裁定](../../apps/host/src/main_task_memory.cpp)
 
+离线端到端回放先在独立进程写两条同名任务，再由实际 CLI 连接同一 SQLite 快照启动的固定本体。`model.prepared` 的首包核对较早的原行动和两个回执号，续行只认当前只读调用的退出回执。测试确认外档案编号被拒，实际终端收到固定答复。[CLI 回放](../../tests/application/terminal_entry.ps1)
+
 ## 输出、回放与验收
 
 用户可见发言从本入口的原消息或回合沿投递身份防重。普通主聊天与书房点名的非空白最终文本进入持久主聊天，`main_reply` 的成功发言和相同的最终文本复用投递。独立原话可收到相同文字。插件玩家发言走游戏渠道，内部报告和静默结算保留各自去向。Hook 前文本、可见文本、持久接纳和实际可核实的送达分别留有出处。[主聊天发言](../../apps/host/src/main_output.cpp) · [主聊天实收](../../apps/host/tests/persistent_dialogue.cpp) · [MC 确认与回信](../../tests/mc-companion/mc_confirmation_route.cpp)

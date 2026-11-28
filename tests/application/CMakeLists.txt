@@ -11,7 +11,9 @@ if(BUILD_CLI)
   add_dependencies(dfy_terminal_entry_fixture dafeiyu-cli)
   add_test(NAME app.terminal_entry COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
     -File "${CMAKE_CURRENT_SOURCE_DIR}/terminal_entry.ps1" -App "$<TARGET_FILE:dafeiyu-cli>"
-    -Fixture "$<TARGET_FILE:dfy_terminal_entry_fixture>" -Root "${PROJECT_BINARY_DIR}/tests/terminal-entry")
+    -Fixture "$<TARGET_FILE:dfy_terminal_entry_fixture>" -Root "${PROJECT_BINARY_DIR}/tests/terminal-entry"
+    -Program "$<TARGET_FILE:dfy_task_memory_tests>" -Panel "$<TARGET_FILE_DIR:dfy_status_example>"
+    -Tools "$<TARGET_FILE_DIR:dfy_tools_fixture>" -Corpus "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/tasks.jsonl")
   set_tests_properties(app.terminal_entry PROPERTIES TIMEOUT 45)
 endif()
 
@@ -44,6 +46,9 @@ set_tests_properties(app.tool_verification app.replay_task PROPERTIES TIMEOUT 15
 dfy_test_executable(dfy_task_memory_tests task_memory.cpp)
 target_sources(dfy_task_memory_tests PRIVATE task_execution_fixture.cpp task_resume.cpp tone_replay.cpp task_understanding_cases.cpp understanding_recall.cpp comparison_archive.cpp channel_observations.cpp task_memory_fixture.hpp)
 add_dependencies(dfy_task_memory_tests dfy_status_example dfy_tools_fixture dfy_freight_fixture dfy_museum_fixture)
+if(BUILD_CLI)
+  add_dependencies(dfy_terminal_entry_fixture dfy_task_memory_tests)
+endif()
 target_link_libraries(dfy_task_memory_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json winsqlite3)
 add_test(NAME app.task_memory COMMAND dfy_task_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
   "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/tasks.jsonl" "${PROJECT_BINARY_DIR}/tests/task-memory/$<CONFIG>")

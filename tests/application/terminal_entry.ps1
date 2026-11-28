@@ -1,4 +1,4 @@
-﻿param([string]$App, [string]$Fixture, [string]$Root)
+﻿param([string]$App, [string]$Fixture, [string]$Root, [string]$Program, [string]$Panel, [string]$Tools, [string]$Corpus)
 $ErrorActionPreference = 'Stop'
 $folder = Join-Path $Root ([guid]::NewGuid().ToString('N'))
 $plugins = Join-Path $folder 'empty packages'
@@ -16,6 +16,7 @@ function Start-Cli([string]$Program, [string[]]$Arguments) {
     $info.CreateNoWindow = $true
     $info.EnvironmentVariables.Remove('DEEPSEEK_API_KEY')
     $info.EnvironmentVariables.Remove('DASHSCOPE_API_KEY')
+    $info.EnvironmentVariables.Remove('DFY_TERMINAL_OFFLINE_FIXTURE')
     $info.RedirectStandardInput = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
@@ -37,6 +38,25 @@ function Invoke-Lines([string[]]$Options, [string[]]$Lines, [string]$Expected, [
         if (!$process.HasExited) { $process.Kill(); $process.WaitForExit() }
         $process.Dispose()
     }
+}
+
+# 等同一档案的管道报告指定替身实例已就绪。
+function Wait-TestHost([Diagnostics.Process]$Process, [string]$ProfilePath) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        try { $status = (& $App --host-status $ProfilePath 2>$null | Out-String) | ConvertFrom-Json } catch { $status = $null }
+        if ($status.state -eq 'running' -and $status.pid -eq $Process.Id) { return }
+        if ($Process.HasExited -or [DateTime]::UtcNow -gt $deadline) { throw 'Fixed host unavailable' }
+        Start-Sleep -Milliseconds 30
+    } while ($true)
+}
+
+# 逐字节核对测试档案和重启进程打开的快照。
+function Measure-TaskSnapshot([string]$Path) {
+    $hash = [Security.Cryptography.SHA256]::Create()
+    $stream = [IO.File]::OpenRead($Path)
+    try { return [BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-','') }
+    finally { $stream.Dispose(); $hash.Dispose() }
 }
 
 # 只对测试目录的原进程等待退出，测试异常时也释放该实例。
@@ -95,13 +115,7 @@ $data = Join-Path $folder 'fixed profile'
 $original = Start-Cli $Fixture @($config,$plugins,$data)
 $options = @('--chat',$config,'--data',$data,'--plugins',$plugins)
 try {
-    $deadline = [DateTime]::UtcNow.AddSeconds(5)
-    do {
-        try { $status = (& $App --host-status $data 2>$null | Out-String) | ConvertFrom-Json } catch { $status = $null }
-        if ($status.state -eq 'running' -and $status.pid -eq $original.Id) { break }
-        if ([DateTime]::UtcNow -gt $deadline) { throw 'Fixed host unavailable' }
-        Start-Sleep -Milliseconds 30
-    } while ($true)
+    Wait-TestHost $original $data
     Invoke-Lines $options @('delayed',"/exit`r`r") 'DaFeiYu'
     Invoke-Lines $options @('/status','/exit') 'Question=pending'
     [IO.File]::WriteAllText((Join-Path $data 'release'),'release')
@@ -119,3 +133,46 @@ try {
     if (!$original.HasExited) { Stop-TestHost $data }
     $original.Dispose()
 }
+
+# 从原任务已退出的 SQLite 副本启动正式终端，核对原件、现场读回和交付。
+# 步骤：结算两条同名任务 → 复制快照并启动另一进程 → CLI 按完整号接续 → 对照两次实际请求。
+$seed = Join-Path $folder 'task proof'
+$data = Join-Path $folder 'resumed profile'
+$trace = Join-Path $folder 'task trace'
+& $Program $Panel $Tools $Corpus $seed '--resume-desktop-seed'
+if ($LASTEXITCODE -ne 0) { throw 'Could not settle both task fixtures' }
+$null = New-Item -ItemType Directory -Path $data
+$source = Join-Path $seed 'seed/main-conversation.sqlite3'
+$copy = Join-Path $data 'main-conversation.sqlite3'
+Copy-Item -LiteralPath $source -Destination $copy
+$digest = Measure-TaskSnapshot $source
+if ((Measure-TaskSnapshot $copy) -ne $digest) { throw 'Terminal received a different task snapshot' }
+$selected = [IO.File]::ReadAllText((Join-Path $seed 'task.json')) | ConvertFrom-Json
+$original = Start-Cli $Fixture @($config,$plugins,$data,$trace)
+$options = @('--chat',$config,'--data',$data,'--plugins',$plugins,'--trace',$trace)
+try {
+    Wait-TestHost $original $data
+    Invoke-Lines $options @(('/plugins install "{0}"' -f $Panel),'/plugins load example.status') 'Loaded example.status.'
+    Invoke-Lines $options @(('/resume {0} "Check the current T03 reading"' -f $selected.foreignReference)) 'dialogue: stale' $true
+    Invoke-Lines $options @(('/resume {0} "Check the current T03 reading"' -f $selected.reference)) 'T03 checked in this run'
+} finally {
+    if (!$original.HasExited) { Stop-TestHost $data }
+    $original.Dispose()
+}
+$events = @(Get-Content -LiteralPath (Join-Path $trace 'trace/events.jsonl') -Encoding UTF8 |
+    ForEach-Object { ConvertFrom-Json -InputObject $_ })
+$sent = @($events | Where-Object { $_.kind -eq 'model.prepared' -and $_.source -eq 'main' })
+$work = @($events | Where-Object { $_.kind -eq 'tool.exited' -and $_.source -eq 'main' })
+if ($sent.Count -ne 2 -or $work.Count -ne 1) { throw 'Expected two requests and just one new work receipt' }
+$before = ($sent[0].input.messages[-1].content | ConvertFrom-Json).items
+$after = ($sent[1].input.messages[-1].content | ConvertFrom-Json).items
+$past = ($before | Where-Object key -eq 'memory.tasks').value.items
+$pending = ($before | Where-Object key -eq 'task.resume').value
+$current = ($after | Where-Object key -eq 'task.resume').value
+if ($past.Count -ne 1 -or $past[0].reference -ne $selected.reference -or $past[0].actionRef -ne $selected.actionRef -or
+    $past[0].receiptRef -ne $selected.receiptRef -or $past[0].readbackRef -ne $selected.readbackRef -or $past[0].verification -ne 'contradicted' -or
+    $pending.state -ne 'awaiting_readback' -or $pending.PSObject.Properties['current']) { throw 'First request did not carry the exact historical T03' }
+if ($current.state -ne 'satisfied' -or $current.current -ne 'idle' -or $current.expected -ne 'idle' -or
+    $current.candidate -ne $work[0].candidate -or $work[0].toolId -ne 'example.status/read' -or
+    $work[0].effect -ne 'not_applied') { throw 'Second request did not carry the actual current readback' }
+Write-Output ("CLI T03 snapshot {0}; historical=1 actual=2 result=satisfied wireBytes={1},{2}" -f $digest,$sent[0].wireBytes,$sent[1].wireBytes)
