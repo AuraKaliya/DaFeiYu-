@@ -30,7 +30,7 @@ class Host {
     using Drive = std::function<void(app::Application&)>;
     // 在业务线程创建应用，按原顺序推进会话与插件。
     explicit Host(Open open, Drive drive = {}, app::SoftwareLog* software = nullptr,
-        std::shared_ptr<app::MessageStore> messages = {}, std::string instance = {});
+        std::shared_ptr<app::MessageStore> messages = {}, std::string instance = {}, app::ToneRecallOptions tone_recall = {});
     // 只复制最近发布的快照，锁内不调用应用服务。
     std::optional<app::RunStatusSnapshot> snapshot() const;
     // 复制业务线程已经核实的房间与身体位置，无需唤醒主会话。
@@ -92,7 +92,7 @@ class Host {
     // 在宿主锁内以业务采样结算已受理的原代次停止并发布目录。
     void publish_plugin_directory(std::shared_ptr<const PluginDirectory> view);
     // 推进原应用服务、发布值快照并在拥有线程上完成关闭。
-    void run(std::stop_token stop, const Open& open, const Drive& drive) noexcept;
+    void run(std::stop_token stop, const Open& open, const Drive& drive, app::ToneRecallOptions tone_recall) noexcept;
     // 在原拥有线程等待会话与插件实际退出，按边界发布收尾进展。
     void shutdown(app::Application& application);
     // 发布新阶段，结算原阶段的耗时与实效。

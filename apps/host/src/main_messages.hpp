@@ -48,6 +48,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::string last_memory_source() const { return store_->last_memory_source(); }
     // 核对当前管理连接实际使用的档案和数据库版本。
     nlohmann::json profile_info() const {return store_->profile_info();}
+    // 报告本机语气编码器状态，不公开待编码来信。
+    std::string_view tone_encoder_state() const {return tone_recall_.encoder_state ? tone_recall_.encoder_state() : "disabled";}
     // 仅管理入口可指定分身权限与一份明确共享的本人原话。
     void grant_avatar(const std::string& plugin,const std::string& channel,const std::string& account,int access,std::string_view source);
     // 主人通过管理命令审阅、发布、校正、撤下知识，或授权某版给指定子库。

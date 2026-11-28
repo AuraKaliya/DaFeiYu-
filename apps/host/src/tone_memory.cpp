@@ -8,7 +8,6 @@ using namespace message_db;
 namespace {
 constexpr std::size_t evidence_bytes = 2048;
 constexpr std::string_view casual_condition = "casual_share";
-constexpr std::string_view casual_description = "主人私聊中随口分享日常小烦恼，希望自然接话";
 
 // 将不同话题里的常见分享措辞归到同一聊天用途，供范围核验与候选查找。
 bool casual_share(std::string_view text) {
@@ -22,7 +21,8 @@ bool casual_share(std::string_view text) {
 // 用同一向量空间的余弦相似度判断用途是否值得送入候选。
 // 步骤：检查范围配置 → 编码当前来信 → 校验向量并比较得分。
 bool matches_casual_scope(std::string_view prompt,const ToneRecallOptions& recall) {
-    const auto& scope=recall.casual_scope_vector;
+    const auto prepared=recall.prepared_scope ? recall.prepared_scope() : nullptr;
+    const auto& scope=prepared ? *prepared : recall.casual_scope_vector;
     const auto minimum=recall.minimum_similarity;
     if (scope.empty() || !(minimum>0 && minimum<=1)) return false;
     const auto query=recall.encode_query(prompt);
@@ -218,7 +218,7 @@ Json MessageStore::tone_for(std::string_view prompt,const ToneRecallOptions& rec
         const auto id=notes.number(0);
         if (project.empty())
             return {{"message",id},{"reference",conversation()+"/"+std::to_string(id)},
-                {"condition",casual_description},{"hint",body.at("hint")}};
+                {"condition",casual_tone_scope},{"hint",body.at("hint")}};
         return {{"message",id},{"reference",conversation()+"/"+std::to_string(id)},{"project",project},
             {"condition",condition},{"hint",body.at("hint")}};
     }

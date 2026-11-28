@@ -55,6 +55,10 @@ class MessageStore {
     nlohmann::json recent_tasks() const;
     // 按消息号读取一批尚需核对的投递，已结算历史不进入启动扫描。
     std::vector<StoredMessage> unfinished(std::int64_t after) const;
+    // 读取同一范围文本和编码版本已保存的合法向量。
+    std::vector<float> cached_tone_scope(std::string_view scope,std::string_view encoder) const;
+    // 用新范围或编码版本的向量替换旧派生缓存。
+    void save_tone_scope(std::string_view scope,std::string_view encoder,const std::vector<float>& components);
   private:
     friend class MainMessages;
     friend class TaskReflection;

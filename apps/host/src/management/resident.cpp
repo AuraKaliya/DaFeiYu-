@@ -2,6 +2,8 @@
 #include "local_pipe.hpp"
 #include "protocol.hpp"
 #include "message_store.hpp"
+#include "paths.hpp"
+#include "tone_memory.hpp"
 #include <dafeiyu/digest.hpp>
 #include <nlohmann/json.hpp>
 #include <random>
@@ -14,6 +16,19 @@ namespace {
 using Json = nlohmann::json;
 using app::SoftwareEvent;
 using app::SoftwareResult;
+
+// 由显式安装的档案资料和程序旁的 CPU 运行时启用语义补漏。
+app::ToneRecallOptions profile_tone_encoder(const std::filesystem::path& profile,const std::shared_ptr<app::MessageStore>& store) {
+    try {
+        const auto assets=profile/"tone-embedding";
+        if (!std::filesystem::exists(assets)) return {};
+        const auto dll=app::executable_directory()/"onnxruntime.dll";
+        if (std::filesystem::is_regular_file(dll))
+            return app::prepare_tone_encoder(store,[assets,dll]{return model::open_bge_small_zh(assets,dll);},
+                0.80,std::chrono::milliseconds(40));
+    } catch (const std::exception&) {}
+    return {.encoder_state=[] {return "unavailable";}};
+}
 
 // 校验管道回包的版本与业务结果，只有正式结果进入调用方。
 Json decode(std::string_view bytes) {
@@ -105,7 +120,8 @@ int serve_resident(const std::filesystem::path& profile, const std::string& iden
         if (log) log->record(SoftwareEvent::message_storage,SoftwareResult::failed);
         throw;
     }
-    Host host(std::move(open),{},log,std::move(messages),instance);
+    auto tone_recall=profile_tone_encoder(profile,messages);
+    Host host(std::move(open),{},log,std::move(messages),instance,std::move(tone_recall));
     bool stopping = false;
     while (!host.exited()) {
         if (stop.stop_requested() && !stopping) { stopping = true; host.close(); }

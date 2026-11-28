@@ -3,9 +3,12 @@
 #include "message_store_db.hpp"
 #include <dafeiyu/model_protocol.hpp>
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <semaphore>
 #include <span>
 
@@ -24,6 +27,8 @@ constexpr auto milk_feedback="这句收一点。我就是跟你说件小事，�
 constexpr auto milk_hint="接住刚说的具体事情，口吻自然一点";
 constexpr auto milk_reason="来信说随口吐槽，主人纠正把小事当成求助的回法，希望顺着这件事自然聊。";
 constexpr auto takeout="午休全耗在等外卖上了，送来还凉透了，跟你嘀咕两句。";
+constexpr auto takeout_paraphrase="午休全搭在等这单外卖上了，打开还是凉的。你说我这一中午图什么呀。";
+constexpr auto takeout_answer="等了一整个午休，打开还是凉的，这顿饭也太折腾了。";
 
 // 从替身实收的宿主尾注读取已授权状态，模型的工具参数不算披露。
 Json sample(const model::Request& request,std::string_view key) {
@@ -74,7 +79,8 @@ struct Replay {
     std::function<void()> after_receive;
     app::Application host;
     // 每个进程经真实本体入口接纳同一固定脚本，记录替身实收请求。
-    explicit Replay(const fs::path& root,std::string_view instance={},app::ToneRecallOptions tone_recall={},bool recent_summary=true) : db(std::make_shared<app::MessageStore>(root)),
+    explicit Replay(const fs::path& root,std::string_view instance={},app::ToneRecallOptions tone_recall={},bool recent_summary=true,
+      std::shared_ptr<app::MessageStore> store={}) : db(store ? std::move(store) : std::make_shared<app::MessageStore>(root)),
       host(model_config(),root/"empty",root,model::Backend{[this](const auto&,const model::Request& request) {
         requests.push_back(request);
         if (interrupt && !sample(request,"memory.tone_pending").is_null()) std::quick_exit(23);
@@ -436,8 +442,7 @@ void semantic_compare(const fs::path& root,std::string_view phase) {
         bool passes_similarity;
     };
     const Case cases[]{
-        {"paraphrase","午休全搭在等这单外卖上了，打开还是凉的。你说我这一中午图什么呀。",
-            "等了一整个午休，打开还是凉的，这顿饭也太折腾了。",{3,1},true},
+        {"paraphrase",takeout_paraphrase,takeout_answer,{3,1},true},
         {"refund","午休全搭在等这单外卖上了，打开还是凉的。帮我写两句给商家，我想申请退款。",
             "您好，餐品送达时已经凉了，麻烦帮我办理退款。",{5,3},true},
         {"unclear","外卖到了，都凉了。","都凉了啊，等了很久吗？",{1,3},false},
@@ -483,6 +488,59 @@ void semantic_compare(const fs::path& root,std::string_view phase) {
     }
     verify_trace(replay);
 }
+
+// 从同源档案的独立进程验证本体线程、SQLite 范围缓存及首包回退。
+// 步骤：装入固定编码替身 → 核对准备状态和编码次数 → 回放原改述和词面命中。
+void cached_compare(const fs::path& root,std::string_view phase) {
+    using namespace std::chrono_literals;
+    const bool enabled=phase!="A";
+    const bool new_scope=phase=="B" || phase=="version";
+    const bool works=new_scope || phase=="reuse";
+    const auto path=root/(enabled ? "B" : "A");
+    auto db=std::make_shared<app::MessageStore>(path);
+    const std::string fingerprint=phase=="B" || phase=="reuse" ? "fixed-v1" : "fixed-v2";
+    std::atomic_uint scopes=0,queries=0;
+    app::ToneRecallOptions recall;
+    if (enabled) recall=app::prepare_tone_encoder(db,[&]() -> model::LocalEncoder {
+        if (phase=="missing") return {};
+        return {fingerprint,[&](std::string_view text,std::stop_token stop) -> std::vector<float> {
+            if (text==app::casual_tone_scope) {++scopes; return {2,0};}
+            ++queries;
+            require(text==takeout_paraphrase,"encoder was called by a pre-matched or unrelated path");
+            if (phase=="timeout") {
+                std::mutex mutex; std::unique_lock lock(mutex); std::condition_variable_any ready;
+                ready.wait(lock,stop,[]{return false;});
+            }
+            if (phase=="invalid") return {std::numeric_limits<float>::quiet_NaN(),1};
+            return {3,1};
+        }};
+    },0.8,phase=="timeout" ? 40ms : 600ms);
+    const auto state=recall.encoder_state;
+    if (state) {
+        const auto deadline=std::chrono::steady_clock::now()+3s;
+        while (state()=="loading" && std::chrono::steady_clock::now()<deadline) std::this_thread::sleep_for(5ms);
+        require(state()==(phase=="missing" ? "unavailable" : new_scope ? "ready_encoded" : "ready_cached"),"incorrect cache startup state");
+    }
+    require(scopes==unsigned(new_scope),"scope encoded unexpectedly");
+    if (enabled && phase!="missing")
+        require(db->cached_tone_scope(app::casual_tone_scope,fingerprint)==std::vector<float>{2,0} &&
+            db->cached_tone_scope("changed scope",fingerprint).empty(),"scope identity not preserved");
+    if (phase=="version") require(db->cached_tone_scope(app::casual_tone_scope,"fixed-v1").empty(),"old encoder kept current cache");
+    Replay replay(path,phase,std::move(recall),true,std::move(db));
+    const auto reference=replay.reference("milk-note");
+    const auto packets=replay.send(std::string(phase)+"-cached",takeout_paraphrase,{say(takeout_answer)});
+    require(packets.size()==1,"encoding changed chat request count");
+    shallow(packets.front(),works ? reference : "","memory.tone_candidate");
+    chat_no_original(packets.front());
+    const auto bytes=model::encode_request_fields(packets.front(),false).size();
+    const auto calls=queries.load();
+    if (phase!="timeout") require(calls==unsigned(enabled && phase!="missing"),"unexpected query encoding count");
+    shallow(replay.send(std::string(phase)+"-literal",takeout,{say(takeout_answer)}).front(),reference,"memory.tone_candidate");
+    if (phase!="timeout") require(queries==calls,"lexical hit used the encoder");
+    verify_trace(replay);
+    std::cout<<Json{{"phase",phase},{"encoder",state ? state() : "disabled"},{"scopeEncodes",scopes.load()},
+        {"firstBytes",bytes},{"firstPacket",works ? Json(reference) : Json(nullptr)}}.dump(-1,' ',true)<<'\n';
+}
 }
 
 // 按独立进程阶段回放项目与普通私聊，项目崩溃样例沿原档案恢复。
@@ -491,6 +549,7 @@ void tone_replay(const fs::path& root,std::string_view phase) {
     if (phase=="recent-A" || phase=="recent-B") { recent_dialogue_pressure(root/std::string(phase.substr(7)),phase=="recent-B"); return; }
     if (phase=="recent-recover-A" || phase=="recent-recover-B") { recent_dialogue_recover(root/std::string(phase.substr(15)),phase.ends_with('B')); return; }
     if (phase=="recent-revoked") { recent_dialogue_recover(root/"revoked",true,true); return; }
+    if (phase.starts_with("cache-")) {cached_compare(root,phase.substr(6)); return;}
     if (phase.starts_with("semantic-")) {semantic_compare(root,phase.substr(9)); return;}
     if (phase=="chat-seed") {chat_seed(root); return;}
     if (phase=="chat-A" || phase=="chat-B") {chat_compare(root/std::string(phase.substr(5)),phase=="chat-B"); return;}

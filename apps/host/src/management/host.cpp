@@ -149,9 +149,12 @@ void Host::shutdown(app::Application& application) {
 }
 
 // 将创建和推进入口移交新业务线程，线程的寿命短于快照存储。
-Host::Host(Open open, Drive drive, app::SoftwareLog* software, std::shared_ptr<app::MessageStore> messages, std::string instance)
+Host::Host(Open open, Drive drive, app::SoftwareLog* software, std::shared_ptr<app::MessageStore> messages, std::string instance,
+    app::ToneRecallOptions tone_recall)
     : messages_(std::move(messages)), instance_(std::move(instance)), software_(software),
-      worker_([this,open = std::move(open),drive = std::move(drive)](std::stop_token stop) { run(stop,open,drive); }) {}
+      worker_([this,open=std::move(open),drive=std::move(drive),recall=std::move(tone_recall)](std::stop_token stop) mutable {
+        run(stop,open,drive,std::move(recall));
+      }) {}
 
 // 在同一窗口锁内登记订阅和采样水位，之后的提交可按客户端自己的游标续读。
 std::optional<std::int64_t> Host::message_watermark(const std::string& client, bool subscribe) const {
@@ -399,7 +402,7 @@ std::shared_ptr<app::HostSettings> Host::settings(const std::string& client, boo
 
 // 只在业务线程拥有和使用应用服务。
 // 步骤：创建应用 → 推进原工作并发布快照 → 有序关闭并报告退出。
-void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexcept {
+void Host::run(std::stop_token stop, const Open& open, const Drive& drive, app::ToneRecallOptions tone_recall) noexcept {
     try {
         const auto application = open();
         {
@@ -407,7 +410,7 @@ void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexc
             settings_ = application->host_settings();
         }
         if (messages_) {
-            application->bind_messages(messages_,instance_,software_);
+            application->bind_messages(messages_,instance_,software_,std::move(tone_recall));
             application->main_messages()->on_reply([this](const std::string& text) { terminal_.published(text); });
         }
         auto& conversation = application->conversation();
