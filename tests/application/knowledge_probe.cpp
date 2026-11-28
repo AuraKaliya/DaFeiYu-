@@ -82,11 +82,23 @@ model::Response KnowledgeProbe::answer(const model::Request& input) {
             auto observation=row.at("observation"); observation["reference"]=resolve(observation.at("reference"));
             return {{model::Role::assistant,"",{{"observe","knowledge_observe",observation.dump()}}},model::FinishReason::tool_calls};
         }
+        if (row.contains("selectLibrary")) {
+            require(items==row.at("catalog") && items.dump().size()<=2048,"wrong library catalog");
+            Json query{{"topics",{row.at("selectLibrary")}},{"view","knowledge"},{"need","multiple"},{"count",3}};
+            return {{model::Role::assistant,"",{{"chosen-library","memory_search",query.dump()}}},model::FinishReason::tool_calls};
+        }
         if (row.contains("openSource")) return open_source(0);
     } else {
         const auto receipt=std::ranges::find_if(input.messages.rbegin(),input.messages.rend(),[](const auto& m){return m.role==model::Role::tool;});
-        const auto state=row.value("state",std::string{row.contains("openSource") ? "ready" : "recorded"});
+        const auto state=row.value("state",std::string{row.contains("openSource") || row.contains("selectLibrary") ? "ready" : "recorded"});
         require(receipt!=input.messages.rend() && receipt->content.find(state)!=std::string::npos,"wrong tool outcome");
+        if (row.contains("selectLibrary")) {
+            const auto& status=Json::parse(input.messages.back().content);
+            const auto& samples=status.at("items");
+            const auto found=std::ranges::find_if(samples,[](const auto& s){return s.at("key")=="knowledge.published";});
+            require((found!=samples.end())==(state=="ready"),"wrong knowledge scope after catalog lookup");
+            if (found!=samples.end()) verify(found->at("value").at("items"),row.at("expect"),true);
+        }
         if (row.contains("openSource") && state!="ready")
             require(input.messages.back().content.find(R"("key":"knowledge.original")")==std::string::npos,"unauthorized source was projected");
         if (row.contains("openSource") && state=="ready") {

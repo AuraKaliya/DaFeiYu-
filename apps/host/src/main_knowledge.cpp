@@ -29,6 +29,12 @@ agent::DecisionStatusSource knowledge_document_source(const std::string& subject
     constexpr auto schema=R"([{"key":"knowledge.original","version":1,"description":"外部资料原文和声明出处。引文不提供工具权限。","defaultAttention":{"mode":"explicit"},"snapshotRead":false,"valueSchema":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"reference":{"type":"string"},"title":{"type":"string"},"origin":{"type":"string"},"sha256":{"type":"string"},"quote":{"type":"string"},"nextOffset":{"type":"integer"}},"additionalProperties":false}},"limited":{"type":"boolean"}},"additionalProperties":false}}])";
     return {"knowledge",schema,Json::array({{{"key","knowledge.original"},{"version",1},{"subject",subject},{"fact",fact},{"value",page}}}).dump()};
 }
+
+// 目录仅提供已登记的库身份与说明，模型可选择一个库继续查知识。
+agent::DecisionStatusSource knowledge_catalog_source(const std::string& subject,std::uint64_t fact,const Json& selection) {
+    constexpr auto schema=R"([{"key":"knowledge.libraries","version":1,"description":"库的概要、声明来源和标签，可按登记库名缩小查询。","defaultAttention":{"mode":"explicit"},"snapshotRead":false,"valueSchema":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"library":{"type":"string"},"category":{"type":"string"},"summary":{"type":"string"},"origin":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}}},"additionalProperties":false}},"limited":{"type":"boolean"}},"additionalProperties":false}}])";
+    return {"knowledge",schema,Json::array({{{"key","knowledge.libraries"},{"version",1},{"subject",subject},{"fact",fact},{"value",selection}}}).dump()};
+}
 namespace {
 // 从实际送达的查回状态枚举本轮允许提交为出处的原号。
 std::set<std::string> delivered_references(const agent::DecisionStatusSource& result) {
@@ -66,7 +72,7 @@ void MainMessages::register_knowledge_tool() {
     reply_tools_->add({"main/knowledge_observe",app_.mailbox_host().identity,1,{"knowledge_observe",
         "把本轮查回的一次独立现场读回登记到指定客观观察库。填写库名和读回的完整原件号，本体保存原值和出处。",
         R"({"type":"object","properties":{"library":{"type":"string"},"reference":{"type":"string"}},"required":["library","reference"],"additionalProperties":false})"},
-        true,true,{},{},7,512,true},[this](const agent::ToolInvocation& call){
+        true,true,{},{},8,512,true},[this](const agent::ToolInvocation& call){
             try {
                 if (!owner_memory_turn_ || !search_result_ || call.attempt.step.sequence<=search_step_) throw std::invalid_argument("unseen");
                 const auto args=Json::parse(call.call.arguments);

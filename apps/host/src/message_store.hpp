@@ -97,6 +97,8 @@ class MessageStore {
     void define_knowledge_library(const nlohmann::json& definition);
     // 审阅指定库或浏览当前档案中一页已登记的知识库。
     nlohmann::json knowledge_libraries(std::string_view library) const;
+    // 按主题、库名、来源或标签查找少量库的登记说明。
+    nlohmann::json search_knowledge_catalog(const std::vector<std::string>& topics,unsigned count) const;
     // 本档案保存外部文件的不可变快照，返回版本化原件号。
     nlohmann::json import_knowledge_document(std::string_view id,std::string_view version,const std::string& title,
         const std::string& origin,const std::string& body);
@@ -117,7 +119,7 @@ class MessageStore {
     nlohmann::json inspect_knowledge(const std::string& article,const std::string& edition) const;
     // 核实当前发布状态、源权限及目标受众后按主题投影，内部保留撤权依赖。
     nlohmann::json search_knowledge(const std::vector<std::string>& topics,unsigned count,std::int64_t child=0,bool outward=false,
-        std::vector<std::string>* dependencies=nullptr) const;
+        std::vector<std::string>* dependencies=nullptr,std::string_view library="") const;
     // 登记不可变的比较对象、观测量、单位、适用条件及比较口径。
     void define_case(const std::string& name,const nlohmann::json& scope);
     // 为比较维护主人认可的检索别名，原范围与出处保持稳定。

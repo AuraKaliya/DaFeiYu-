@@ -27,6 +27,12 @@ std::int64_t number(std::string_view s) {
     if(ec!=std::errc{} || end!=s.data()+s.size() || id<=0 || s.front()=='0') throw std::invalid_argument("knowledge: invalid source");
     return id;
 }
+
+// 按统一列顺序交付库的身份、覆盖范围和来源标签。
+Json library_item(const Statement& rows) {
+    return {{"library",rows.text(0)},{"category",rows.text(1)},{"summary",rows.text(2)},
+        {"origin",rows.text(3)},{"tags",Json::parse(rows.text(4))}};
+}
 // 核对依据原件类型和此刻的读取权，保留原作者类别及撤权依赖。
 std::optional<MemoryBasis> basis(sqlite3* db,const std::string& profile,const std::string& ref) {
     if (!ref.starts_with(profile+"/")) return {};
@@ -186,10 +192,30 @@ Json MessageStore::knowledge_libraries(std::string_view library) const {
     auto result=Json::array();
     while (rows.next()) {
         if (result.size()==64) return {{"libraries",std::move(result)},{"limited",true}};
-        result.push_back({{"library",rows.text(0)},{"category",rows.text(1)},{"summary",rows.text(2)},
-            {"origin",rows.text(3)},{"tags",Json::parse(rows.text(4))}});
+        result.push_back(library_item(rows));
     }
     return {{"libraries",std::move(result)},{"limited",false}};
+}
+
+// 主人私聊按登记说明找库，原件和正文由独立的后续选择读取。
+// 步骤：检查查询词 → 按库名优先合并元数据命中 → 在统一证据预算内交付目录。
+Json MessageStore::search_knowledge_catalog(const std::vector<std::string>& topics,unsigned count) const {
+    if (topics.size()>3 || !count || count>3) throw std::invalid_argument("knowledge: invalid catalog query");
+    for (const auto& term : topics) prose(term,160);
+    std::lock_guard lock(state_->mutex);
+    Statement rows(state_->db,"WITH q(term) AS (VALUES(?1),(?2),(?3)) SELECT l.library,l.category,l.summary,l.origin,l.tags "
+        "FROM knowledge_library l LEFT JOIN q ON term<>'' AND (l.library=term OR l.category=term OR instr(l.summary,term)>0 "
+        "OR instr(l.origin,term)>0 OR EXISTS(SELECT 1 FROM json_each(l.tags) WHERE value=term)) "
+        "WHERE ?1='' OR term IS NOT NULL GROUP BY l.library ORDER BY max(l.library=term) DESC,l.library LIMIT ?4");
+    for (unsigned i=0;i<3;++i) rows.bind(i+1,i<topics.size() ? topics[i] : std::string{});
+    rows.bind(4,count+1);
+    Json items=Json::array(); bool limited=false;
+    while (rows.next()) {
+        if (items.size()==count) {limited=true; break;}
+        items.push_back(library_item(rows));
+        if (items.dump().size()>2048) {items.erase(items.end()-1); limited=true; break;}
+    }
+    return {{"items",std::move(items)},{"limited",limited}};
 }
 
 // 提交一个独立编号的外部资料快照，重复导入只允许相同字节、标题与来源。
@@ -426,19 +452,21 @@ Json MessageStore::inspect_knowledge(const std::string& article,const std::strin
 
 // 仅投影当前已发布且全部原件仍获准的版本。子库接收发布文本和来源类别，原件号保留给主人。
 Json MessageStore::search_knowledge(const std::vector<std::string>& topics,unsigned count,std::int64_t child,bool outward,
-    std::vector<std::string>* dependencies) const {
+    std::vector<std::string>* dependencies,std::string_view library) const {
     if (topics.empty() || topics.size()>3 || !count) throw std::invalid_argument("knowledge: invalid query");
     for(const auto& topic : topics) prose(topic,160);
     std::lock_guard lock(state_->mutex); auto* db=state_->db;
     Statement hits(db,"WITH q(term) AS (VALUES(?1),(?2),(?3)) SELECT e.id,e.article,e.tag,e.topic,e.applies,e.statement,e.published,e.proposer,"
         "l.library,l.category,e.claim_kind,e.publisher,e.verification FROM knowledge_article a JOIN knowledge_edition e ON e.id=a.head JOIN knowledge_library l USING(library) JOIN q "
         "WHERE term<>'' AND (a.article=term OR instr(e.topic,term)>0 OR l.library=term OR EXISTS(SELECT 1 FROM json_each(l.tags) WHERE value=term)) "
+        "AND (?6='' OR a.library=?6) "
         "AND (?4=0 OR EXISTS(SELECT 1 FROM knowledge_grant g "
         "JOIN child_owner c ON c.id=g.child WHERE g.edition=e.id AND c.id=?4 AND (g.rights & ?5)=?5 AND (c.access & 1)=1 "
         "AND (c.preset<>3 OR (c.access & ?5)=?5))) GROUP BY e.id ORDER BY max(a.article=term) DESC,count(DISTINCT term) DESC,"
         "max(e.topic=term) DESC,e.id DESC");
     for(int i=0;i<3;++i) hits.bind(i+1,i<static_cast<int>(topics.size()) ? topics[i] : std::string{});
     hits.bind(4,child); hits.bind(5,outward ? 5 : 1);
+    hits.bind(6,library.empty() ? std::string_view("") : library);
     Json result{{"items",Json::array()},{"limited",false}};
     auto& items=result.at("items");
     while(hits.next()) {

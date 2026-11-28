@@ -155,3 +155,7 @@
 {"op":"admin","command":"/memory revoke @second-task"}
 {"op":"admin","command":"/knowledge inspect panel-checked v2","revision":3,"inspect":{"evidenceUnavailable":true}}
 {"op":"kb","topics":["面板读回规律"],"expect":[]}
+{"op":"admin","command":"/knowledge propose-in external external catalog-decoy v1 0 \"field 备查条目\" 仅适用手册 \"每周交接一次\" @manual"}
+{"op":"admin","command":"/knowledge publish catalog-decoy v1","revision":1}
+{"op":"kb","topics":["展厅证据"],"view":"knowledge_catalog","sample":"knowledge.libraries","catalog":[{"library":"field","category":"observed","summary":"展厅现场核验","origin":"由面板独立采样","tags":["展厅证据"]}],"selectLibrary":"field","expect":[{"article":"observed-panel","edition":"v1","library":"field","kinds":["tool_readback"]}]}
+{"op":"kb","topics":["面板独立"],"view":"knowledge_catalog","sample":"knowledge.libraries","catalog":[{"library":"field","category":"observed","summary":"展厅现场核验","origin":"由面板独立采样","tags":["展厅证据"]}],"selectLibrary":"external","state":"unavailable"}
