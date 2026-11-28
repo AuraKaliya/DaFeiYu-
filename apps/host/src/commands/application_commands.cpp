@@ -255,7 +255,7 @@ bool application_command(Application& application, std::string_view command, std
     else if (name=="/knowledge") {
         auto* memory=application.main_messages();
         if (!memory) throw std::invalid_argument("knowledge: profile required");
-        output<<memory->manage_knowledge(command_words(command,11)).dump()<<'\n';
+        output<<memory->manage_knowledge(command_words(command,13)).dump()<<'\n';
     }
     else if (name == "/memory") {
         auto* memory = application.main_messages();

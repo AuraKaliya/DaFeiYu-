@@ -45,6 +45,12 @@ std::int64_t append_receipt(sqlite3* db, std::int64_t id, const Json& receipt) {
     index_delivery(db,id,receipt);
     return revision;
 }
+// 旧档案重建后也可能保留单个新列，升级时只补齐缺少的列。
+bool has_column(sqlite3* db,std::string_view table,std::string_view name) {
+    Statement columns(db,"SELECT 1 FROM pragma_table_info(?) WHERE name=?");
+    columns.bind(1,table); columns.bind(2,name);
+    return columns.next();
+}
 }
 
 
@@ -63,7 +69,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
         std::int64_t previous=0;
         {
             Statement version(db,"PRAGMA user_version");
-            if (!version.next() || version.number(0)>19) throw std::runtime_error("messages: unsupported database version");
+            if (!version.next() || version.number(0)>20) throw std::runtime_error("messages: unsupported database version");
             previous=version.number(0);
         }
         if (previous==0) {
@@ -171,6 +177,17 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             "through_message INTEGER NOT NULL,authority INTEGER NOT NULL,body TEXT NOT NULL,tone TEXT NOT NULL);"
             "CREATE INDEX IF NOT EXISTS recent_dialogue_reply ON messages(json_extract(envelope,'$.replyTo'),id) WHERE source='main';"
             "PRAGMA user_version=19");
+        if(previous<20) {
+            sql(db,"CREATE TABLE IF NOT EXISTS knowledge_library(library TEXT PRIMARY KEY,category TEXT NOT NULL CHECK(category IN ('observed','external')),"
+                "summary TEXT NOT NULL,origin TEXT NOT NULL,tags TEXT NOT NULL);"
+                "INSERT OR IGNORE INTO knowledge_library VALUES('observed','observed','从本体亲历、原件或已核验的读回整理','本档案的可读原件','[]'),"
+                "('external','external','主人导入的客观资料','外部资料及其注明的出处','[]');");
+            if (!has_column(db,"knowledge_article","library"))
+                sql(db,"ALTER TABLE knowledge_article ADD COLUMN library TEXT NOT NULL DEFAULT 'observed'");
+            if (!has_column(db,"knowledge_edition","claim_kind"))
+                sql(db,"ALTER TABLE knowledge_edition ADD COLUMN claim_kind TEXT NOT NULL DEFAULT 'legacy'");
+            sql(db,"PRAGMA user_version=20");
+        }
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");

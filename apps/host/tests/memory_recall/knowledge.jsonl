@@ -2,6 +2,8 @@
 {"op":"kb","topics":["操作规程"],"view":"originals","sample":"memory.matches","draft":{"article":"display","edition":"bad","base":0,"statement":"无效。","topic":"展台规程","applies":"仅用于本展台交接","sources":["foreign/1"]},"state":"invalid_proposal"}
 {"op":"kb","topics":["操作规程"],"view":"originals","sample":"memory.matches","draft":{"article":"display","edition":"v1","base":0,"statement":"午休展台可按主人规定切换为专注。","topic":"展台规程","applies":"仅用于本展台交接","sources":["@source"]}}
 {"op":"kb","topics":["展台规程"],"expect":[]}
+{"op":"admin","command":"/knowledge define-library field observed \"展厅现场核验\" \"由面板独立采样\" 展厅证据","libraries":[{"library":"field","category":"observed","summary":"展厅现场核验","origin":"由面板独立采样","tags":["展厅证据"]}]}
+{"op":"admin","command":"/knowledge define-library field external \"类别冲突\" \"外部\"","deny":true}
 {"op":"admin","command":"/knowledge inspect display v1","revision":0,"inspect":{"statement":"午休展台可按主人规定切换为专注。","current":false,"publishedRevision":0}}
 {"op":"admin","command":"/knowledge publish display v1","revision":1}
 {"op":"admin","command":"/knowledge publish display v1","revision":1}
@@ -80,3 +82,17 @@
 {"op":"run","session":"after","expect":[],"knowledge":[]}
 {"op":"restart"}
 {"op":"kb","topics":["展台规程"],"expect":[]}
+{"op":"admin","command":"/knowledge libraries field","libraries":[{"library":"field","category":"observed","summary":"展厅现场核验","origin":"由面板独立采样","tags":["展厅证据"]}]}
+{"op":"admin","command":"/knowledge propose-in field observation observed-panel bad 0 面板采样 当前展台 idle @readback","deny":true}
+{"op":"admin","command":"/knowledge propose-in field observation observed-panel v1 0 面板采样 当前展台 focus @readback"}
+{"op":"admin","command":"/knowledge publish observed-panel v1","revision":1}
+{"op":"kb","topics":["展厅证据"],"expect":[{"article":"observed-panel","edition":"v1","revision":1,"statement":"focus","kinds":["tool_readback"],"library":"field","category":"observed","claimKind":"observation"}]}
+{"op":"admin","command":"/knowledge propose-in field rule panel-rule few 0 展台做法 当前展台 \"切换后按原读口核实\" @readback","deny":true}
+{"op":"case_task","id":"再次核实面板","save":"@second","tool":"example.status/set_focus","expected":"focus"}
+{"op":"admin","command":"/knowledge propose-in field rule panel-rule v1 0 展台做法 当前展台 \"切换后按原读口核实\" @readback @second"}
+{"op":"admin","command":"/knowledge publish panel-rule v1","revision":1}
+{"op":"kb","topics":["展台做法"],"expect":[{"article":"panel-rule","edition":"v1","revision":1,"kinds":["tool_readback","tool_readback"],"library":"field","category":"observed","claimKind":"rule","refs":["@readback","@second"]}]}
+{"op":"source","text":"记住 外部资料：展厅外部手册列明每周交接一次。","alias":"@manual"}
+{"op":"admin","command":"/knowledge propose-in external external external-manual v1 0 手册摘录 展厅手册 \"每周交接一次\" @manual"}
+{"op":"admin","command":"/knowledge publish external-manual v1","revision":1}
+{"op":"kb","topics":["手册摘录"],"expect":[{"article":"external-manual","edition":"v1","revision":1,"library":"external","category":"external","claimKind":"external","kinds":["owner_statement"]}]}

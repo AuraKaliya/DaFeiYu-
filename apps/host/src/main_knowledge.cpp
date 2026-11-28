@@ -11,7 +11,7 @@ agent::DecisionStatusSource knowledge_source(const std::string& subject,std::uin
     static const auto schema=[]{
         const Json str{{"type","string"}},number{{"type","integer"}};
         Json fields=Json::object();
-        for(const auto key : {"article","edition","topic","applies","statement","proposer","publisher"}) fields[key]=str;
+        for(const auto key : {"article","edition","topic","applies","statement","proposer","publisher","library","category","claimKind"}) fields[key]=str;
         fields["revision"]=number;
         fields["sources"]={{"type","array"},{"items",{{"type","object"},{"properties",{{"kind",str},{"reference",str}}},{"additionalProperties",false}}}};
         const Json item{{"type","object"},{"properties",fields},{"additionalProperties",false}};
@@ -26,8 +26,9 @@ void MainMessages::register_knowledge_tool() {
     reply_tools_->add({"main/knowledge_propose",app_.mailbox_host().identity,1,{"knowledge_propose",
         "主人要求整理可复用做法时，可将刚刚查到的真实依据整理成待主人审阅的草案。"
         "article、edition 为简短字母数字键，base 为当前发布修订，首次为 0。说明 topic、applies、statement。"
+        "按已知资料选择 library 及 kind。observation 逐字记录一道独立读回的值，rule 附两次独立读回。"
         "sources 填本轮看过的一至三份主人原话号、动作后独立读回号或子 Agent 结束信号。报告须注明原作者。成功后仅说明已提议。",
-        R"({"type":"object","properties":{"article":{"type":"string"},"edition":{"type":"string"},"base":{"type":"integer"},"topic":{"type":"string"},"applies":{"type":"string"},"statement":{"type":"string"},"sources":{"type":"array","items":{"type":"string"}}},"required":["article","edition","base","topic","applies","statement","sources"],"additionalProperties":false})"},
+        R"({"type":"object","properties":{"article":{"type":"string"},"edition":{"type":"string"},"base":{"type":"integer"},"topic":{"type":"string"},"applies":{"type":"string"},"statement":{"type":"string"},"library":{"type":"string"},"kind":{"type":"string","enum":["observation","rule"]},"sources":{"type":"array","items":{"type":"string"}}},"required":["article","edition","base","topic","applies","statement","sources"],"additionalProperties":false})"},
         true,true,{},{},7,512,true},[this](const agent::ToolInvocation& call){
             try {
                 if (!owner_memory_turn_ || !search_result_ || call.attempt.step.sequence<=search_step_) throw std::invalid_argument("unseen");
@@ -57,8 +58,20 @@ std::int64_t revision(const std::string& value) {
 }
 // 主人逐版决定哪些草案可发布、给谁读；变更后撤销旧请求并隔离原上下文。
 Json MainMessages::manage_knowledge(const std::vector<std::string>& words) {
+    if (words.size()>=2 && words[1]=="libraries" && words.size()<=3)
+        return store_->knowledge_libraries(words.size()==3 ? words[2] : "");
     if (words.size()<3) throw std::invalid_argument("knowledge: expected propose, inspect, publish, withdraw or grant");
     const auto& verb=words[1],&article=words[2];
+    if (verb=="define-library" && words.size()>=6 && words.size()<=12) {
+        store_->define_knowledge_library({{"library",article},{"category",words[3]},{"summary",words[4]},
+            {"origin",words[5]},{"tags",std::vector<std::string>(words.begin()+6,words.end())}});
+        return store_->knowledge_libraries(article);
+    }
+    if (verb=="propose-in" && words.size()>=11 && words.size()<=13) {
+        Json draft{{"library",article},{"kind",words[3]},{"article",words[4]},{"edition",words[5]},{"base",revision(words[6])},
+            {"topic",words[7]},{"applies",words[8]},{"statement",words[9]},{"sources",std::vector<std::string>(words.begin()+10,words.end())}};
+        return store_->propose_knowledge(draft,"owner");
+    }
     if (verb=="inspect" && (words.size()==3 || words.size()==4)) return store_->inspect_knowledge(article,words.size()==4 ? words[3] : "");
     if (verb=="propose" && words.size()>=9 && words.size()<=11) {
         Json draft{{"article",article},{"edition",words[3]},{"base",revision(words[4])},{"topic",words[5]},

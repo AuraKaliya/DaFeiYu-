@@ -88,6 +88,10 @@ class MessageStore {
     void acknowledge_letters(const std::vector<std::string>& references);
     // 保存有出处的候选版本；它仅供主人审阅。
     nlohmann::json propose_knowledge(const nlohmann::json& draft,std::string_view proposer);
+    // 主人登记知识库说明、来源及标签。库的两类来源归属保持稳定。
+    void define_knowledge_library(const nlohmann::json& definition);
+    // 审阅指定库或浏览当前档案中一页已登记的知识库。
+    nlohmann::json knowledge_libraries(std::string_view library) const;
     // 在同一事务校验当前版本及全部原件后发布或撤下，变更只由管理入口发起。
     bool publish_knowledge(const std::string& article,const std::string& edition,std::optional<std::int64_t> withdraw);
     // 主人按指定子库授予某一已发布版本的读取或转述权。

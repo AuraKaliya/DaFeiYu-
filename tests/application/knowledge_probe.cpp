@@ -14,7 +14,7 @@ void KnowledgeProbe::verify(const Json& items,const Json& wanted,bool owner) con
     require(items.size()==wanted.size() && items.dump().size()<=2048,"knowledge result size");
     for(std::size_t i=0;i<wanted.size();++i) {
         const auto& v=items[i]; const auto& w=wanted[i];
-        for(const auto key : {"article","edition","revision","applies","statement","proposer"}) if (w.contains(key))
+        for(const auto key : {"article","edition","revision","applies","statement","proposer","library","category","claimKind"}) if (w.contains(key))
             require(v.at(key)==w.at(key),std::string("incorrect publication ")+key);
         require(v.at("publisher")=="owner","unapproved publisher");
         const auto& sources=v.at("sources"); require(sources.size()==w.at("kinds").size(),"wrong number of knowledge sources");
@@ -85,6 +85,7 @@ void KnowledgeProbe::admin(app::Application& host,const Json& input) const {
     require(!input.value("deny",false),"administrative action should have failed");
     if (!cmd.starts_with("/knowledge ")) return;
     const auto result=Json::parse(out.str());
+    if (input.contains("libraries")) require(result.at("libraries")==input.at("libraries"),"incorrect library catalog");
     if (input.contains("revision")) require(result.at("revision")==input.at("revision"),"wrong publication revision");
     if (input.contains("inspect")) {
         const auto& item=result.at("editions").at(0);
