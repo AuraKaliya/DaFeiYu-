@@ -69,8 +69,9 @@ class Application {
     std::shared_ptr<HostSettings> host_settings() const noexcept { return host_settings_; }
     // 访问应用拥有的问答与运行服务。
     Conversation& conversation() noexcept { return conversation_; }
-    // 在独占目录的后台关联主会话消息，独立测试和专用宿主可沿用原入口。
-    void bind_messages(std::shared_ptr<MessageStore> store, const std::string& instance, SoftwareLog* log);
+    // 在独占目录关联主会话消息，回放基线可关闭普通私聊的首包语气候选。
+    void bind_messages(std::shared_ptr<MessageStore> store, const std::string& instance, SoftwareLog* log,
+        bool recall_casual_tone = true);
     // 返回当前业务线程的主消息投递器。
     MainMessages* main_messages() const noexcept { return main_messages_.get(); }
     // 读取本体的房间布局和绑定身体，不依赖窗口或加载的插件。

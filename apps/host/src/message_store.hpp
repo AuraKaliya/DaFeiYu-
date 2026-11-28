@@ -144,7 +144,7 @@ class MessageStore {
     nlohmann::json note_tone(std::int64_t message,const nlohmann::json& proposal);
     // 原子发布准备完成的范围与依据，关联实际送达的改写。
     void settle_tones();
-    // 在当前项目和汇报条件下查一条适用纠正。
+    // 按项目和汇报条件查适用纠正，或按聊天用途查一条普通私聊候选。
     nlohmann::json tone_for(std::string_view prompt) const;
     // 按登记项目找最近一条可补证的未定反馈。
     std::string unclear_tone(std::string_view project) const;

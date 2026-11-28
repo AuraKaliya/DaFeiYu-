@@ -52,9 +52,10 @@ void MainMessages::register_memory_tools() {
         "回执含 reviewDue 表示已有同主题原件，宜用 memory_search 的 originals 对照。同一事项才复盘，主题相同本身不足以合并。"
         "主人直接纠正已送达回复的语气时，用 kind=correction 和 tone，reply 逐字摘录所指回复。仅纠正当前这次用 one_time，"
         "所指明确但范围不清用 unconfirmed。语境足以界定下次适用的场合时可直接用 ongoing，写短提示 hint 和基于现有原话的 reason。"
-        "默认用于项目进度，正式验收场合才适用时 condition=accepted。draft 表示已保留、待整理。"
+        "项目进度用默认 condition=progress，正式验收场合用 accepted。主人私聊随口分享小烦恼、希望自然接话时用 casual_share，"
+        "reason 说明所指回复和主人原话怎样支持这个用途。draft 表示已保留、待整理。"
         "新反馈明确补足同一经历的范围时，用已知原件号 tone.prior；转述、泛泛评价和表达来源不清时直接交谈。",
-        R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]},"tone":{"type":"object","properties":{"reply":{"type":"string"},"hint":{"type":"string"},"reason":{"type":"string"},"condition":{"type":"string","enum":["progress","accepted"]},"prior":{"type":"string"}},"required":["reply"],"additionalProperties":false}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
+        R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]},"tone":{"type":"object","properties":{"reply":{"type":"string"},"hint":{"type":"string"},"reason":{"type":"string"},"condition":{"type":"string","enum":["progress","accepted","casual_share"]},"prior":{"type":"string"}},"required":["reply"],"additionalProperties":false}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
         true,true,{},{},1,512,true},[this](const agent::ToolInvocation& call){return consider_memory(call);});
     reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,11,{"memory_search",
         "当答案需要以前的约定、偏好或个人事实，且当前对话依据不足时检索。普通常识、寒暄、当前原话足够时直接回应。"
@@ -226,7 +227,8 @@ void MainMessages::settle_tone() {
     }
 }
 
-// 按需展开优先，其次保留当前反馈或装配一条适用的浅层记忆。
+// 按需展开优先，其次保留当前反馈或装配一条浅层记忆，普通私聊只提供候选。
+// 步骤：按号复核查证材料 → 核对待整理反馈 → 查询并投影当前语境的浅层材料。
 std::optional<agent::DecisionStatusSource> MainMessages::tone_projection(std::string_view prompt) const {
     if (tone_read_) {
         if (tone_read_->empty()) return {};
@@ -241,8 +243,13 @@ std::optional<agent::DecisionStatusSource> MainMessages::tone_projection(std::st
             {"state","excerpt"});
     }
     auto evidence=tone_context_current_ ? store_->tone_for(prompt) : Json(nullptr);
-    if (!evidence.is_null()) return tone_source("memory.tone","当前汇报语境适用的语气偏好。本轮明确要求优先，按需查原文或理由。",std::move(evidence),
-        {"project","condition","hint"});
+    if (evidence.is_null()) return {};
+    if (evidence.contains("project"))
+        return tone_source("memory.tone","当前汇报语境适用的语气偏好。本轮明确要求优先，按需查原文或理由。",std::move(evidence),
+            {"project","condition","hint"});
+    if (recall_casual_tone_)
+        return tone_source("memory.tone_candidate","仅在本轮语境符合适用条件时采用的语气候选。本轮明确请求优先，用途不明时暂缓采用。需要原文或理由时按号查证。",
+            std::move(evidence),{"condition","hint"});
     return {};
 }
 

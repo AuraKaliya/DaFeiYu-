@@ -17,9 +17,10 @@ std::string reply_prefix(const std::string& instance, agent::RunId run) {
 // 绑定原后台的持久消息库与诊断，支持结构化调用的后端可在对话回合显式发言。
 // 步骤：固定渠道所有者 → 注册面向当前主聊天的发言契约 → 绑定业务线程执行入口。
 MainMessages::MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance,
-    SoftwareLog* log, RunLog* trace, bool structured, std::shared_ptr<TaskReflection> reflection)
+    SoftwareLog* log, RunLog* trace, bool structured, std::shared_ptr<TaskReflection> reflection, bool recall_casual_tone)
     : app_(application),store_(std::move(store)),instance_(std::move(instance)),
-      memory_revision_(store_->memory_revision()),reflection_(std::move(reflection)),log_(log),trace_(trace) {
+      memory_revision_(store_->memory_revision()),recall_casual_tone_(recall_casual_tone),
+      reflection_(std::move(reflection)),log_(log),trace_(trace) {
     if (!structured) return;
     reply_tools_ = std::make_unique<agent::ToolCatalog>(8);
     reply_tools_->add({reply_id,app_.mailbox_host().identity,1,{"main_reply",

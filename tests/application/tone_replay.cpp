@@ -17,6 +17,12 @@ constexpr auto before="这波稳了，直接冲下一阶段！";
 constexpr auto reason="原答在汇报该项目的进展，这次反馈要求平实开场。";
 constexpr auto exception="正式验收的里程碑，可以先高兴一句，再说结果。";
 constexpr auto milestone_reason="主人把庆祝开场限定在正式验收的里程碑。";
+constexpr auto milk="下班就想买瓶牛奶，排了二十分钟。随口吐槽一下。";
+constexpr auto milk_before="我理解你的负面情绪。针对排队问题，可以采取以下措施。";
+constexpr auto milk_feedback="这句收一点。我就是跟你说件小事，你顺着我说的聊两句就行。";
+constexpr auto milk_hint="接住刚说的具体事情，口吻自然一点";
+constexpr auto milk_reason="来信说随口吐槽，主人纠正把小事当成求助的回法，希望顺着这件事自然聊。";
+constexpr auto takeout="午休全耗在等外卖上了，送来还凉透了，跟你嘀咕两句。";
 
 // 从替身实收的宿主尾注读取已授权状态，模型的工具参数不算披露。
 Json sample(const model::Request& request,std::string_view key) {
@@ -43,6 +49,12 @@ model::Response note(std::string quote,std::string reply,std::string scope="ongo
     return call("memory_note",{{"topic","汇报语气"},{"kind","correction"},{"scope",scope},{"excerpt",quote},{"tone",tone}});
 }
 
+// 用固定的范围判断登记日常分享中的纠正，语境依据由本体核验。
+model::Response chat_note(std::string feedback,std::string prior_reply) {
+    return call("memory_note",{{"topic","日常分享语气"},{"kind","correction"},{"scope","ongoing"},{"excerpt",feedback},
+        {"tone",{{"reply",prior_reply},{"hint",milk_hint},{"reason",milk_reason},{"condition","casual_share"}}}});
+}
+
 // 两组以同一个固定按号请求展开原话。
 model::Response lookup(const std::string& reference) {
     return call("memory_search",{{"topics",{reference}},{"count",1},{"need","single"},{"view","originals"}});
@@ -61,7 +73,7 @@ struct Replay {
     std::function<void()> after_receive;
     app::Application host;
     // 每个进程经真实本体入口接纳同一固定脚本，记录替身实收请求。
-    explicit Replay(const fs::path& root,std::string_view instance={}) : db(std::make_shared<app::MessageStore>(root)),
+    explicit Replay(const fs::path& root,std::string_view instance={},bool recall_casual_tone=true) : db(std::make_shared<app::MessageStore>(root)),
       host(model_config(),root/"empty",root,model::Backend{[this](const auto&,const model::Request& request) {
         requests.push_back(request);
         if (interrupt && !sample(request,"memory.tone_pending").is_null()) std::quick_exit(23);
@@ -69,7 +81,7 @@ struct Replay {
         require(!responses.empty(),"unexpected backend request");
         auto response=std::move(responses.front()); responses.pop_front(); return response;
     }},app::ApplicationRunConfig{.trace_directory=root/"trace"}) {
-        host.bind_messages(db,instance.empty() ? root.filename().string() : std::string(instance),nullptr);
+        host.bind_messages(db,instance.empty() ? root.filename().string() : std::string(instance),nullptr,recall_casual_tone);
     }
 
     // 经原聊天入口完成一次回合并切出这一回合的实收请求。
@@ -109,6 +121,11 @@ void verify_trace(Replay& replay,bool require_compaction=false) {
     if (require_compaction) require(compacted,"seed never compressed the dialogue");
 }
 
+// 经正常对话扩大历史窗口，给 Trace 核对上下文压缩留出实样。
+void pad_history(Replay& replay) {
+    for (unsigned i=0;i<10;++i) replay.send("padding-"+std::to_string(i),"容量对照 "+std::to_string(i),{say(std::string(3000,'z'))});
+}
+
 // 按正常收录、改写和整理流程生成启动快照。
 // 步骤：登记项目 → 收录一般纠正及验收例外 → 注入边界反馈 → 压缩旧历史。
 void seed(const fs::path& root) {
@@ -126,7 +143,7 @@ void seed(const fs::path& root) {
     replay.send("mint-question","「薄荷项目」的进度如何？",{say("这就一路猛冲！")});
     replay.send("once","只改这句，语气收一点。",{note("只改这句","一路猛冲"),say()});
     replay.send("unrelated","转述一下，网友说『语气收一点』。",{note("语气收一点","不属于实际回复"),say()});
-    for (unsigned i=0;i<10;++i) replay.send("padding-"+std::to_string(i),"容量对照 "+std::to_string(i),{say(std::string(3000,'z'))});
+    pad_history(replay);
     replay.send("garnet-question","「朱砂项目」的进度如何？",{say("绝妙开局，赶紧冲过终点！")});
     verify_trace(replay,true);
 }
@@ -142,8 +159,8 @@ void baseline(const fs::path& root) {
 }
 
 // 核对首包是否含指定范围的纠正，并检查浅层提示的预算。
-void shallow(const model::Request& request,const std::string& expected={}) {
-    const auto item=sample(request,"memory.tone");
+void shallow(const model::Request& request,const std::string& expected={},std::string_view key="memory.tone") {
+    const auto item=sample(request,key);
     if (expected.empty()) require(item.is_null(),"unexpected shallow correction: "+item.dump());
     else require(item.at("reference")==expected && Json::array({item}).dump().size()<=2048 && !item.contains("quote") && !item.contains("reason"),
         "wrong shallow correction: "+item.dump());
@@ -200,6 +217,27 @@ void compare(const fs::path& root,bool enabled) {
     verify_trace(replay);
 }
 
+// 等替身收到首包后撤回原件，随后放行固定深查提议并确认回合没有续发。
+// 步骤：暂停替身回包 → 撤权 → 放行固定提议并核对实际请求数。
+void revoke_inflight(Replay& replay,const std::string& prompt,const std::string& reference) {
+    struct Checkpoint {std::binary_semaphore received{0},resume{0};};
+    const auto checkpoint=std::make_shared<Checkpoint>();
+    replay.after_receive=[checkpoint] {
+        checkpoint->received.release();
+        require(checkpoint->resume.try_acquire_for(std::chrono::seconds(4)),"revoke checkpoint timed out");
+    };
+    replay.responses.push_back(lookup(reference));
+    const auto cut=replay.requests.size();
+    replay.host.main_messages()->terminal("before-revoke",prompt);
+    require(checkpoint->received.try_acquire_for(std::chrono::seconds(4)),"authorized first packet was not received");
+    replay.host.main_messages()->change_memory(reference,std::nullopt);
+    checkpoint->resume.release();
+    drain(replay.host);
+    replay.after_receive={};
+    require(replay.requests.size()==cut+1,"revoked run sent a continuation");
+    replay.responses.clear();
+}
+
 // 在真实房间及不同档案里验证拒绝，并在首包和计划发起的深查之间撤回原件。
 void guards(const fs::path& root) {
     Replay replay(root/"guards");
@@ -212,22 +250,8 @@ void guards(const fs::path& root) {
     require(model::encode_request_fields(replay.requests.back(),false).find(correction)==std::string::npos,"room received private feedback");
     for (const auto& tool:replay.requests.back().tools) require(tool.name!="memory_search","private lookup available in room");
 
-    std::binary_semaphore received(0),resume(0);
-    replay.after_receive=[&] {
-        received.release();
-        require(resume.try_acquire_for(std::chrono::seconds(4)),"revoke checkpoint timed out");
-    };
-    replay.responses.push_back(lookup(older));
-    const auto cut=replay.requests.size();
-    replay.host.main_messages()->terminal("before-revoke",report);
-    require(received.try_acquire_for(std::chrono::seconds(4)),"authorized first packet was not received");
-    replay.host.main_messages()->change_memory(older,std::nullopt);
-    resume.release();
-    drain(replay.host);
-    replay.after_receive={};
-    require(replay.requests.size()==cut+1,"revoked run sent a continuation");
+    revoke_inflight(replay,report,older);
     shallow(replay.requests.back(),older);
-    replay.responses.clear();
     shallow(replay.send("after-revoke",report,{say()}).front());
     const auto denied=replay.send("revoked-audit","按编号复查旧语气。",{lookup(older),say()});
     require(denied.size()==2 && sample(denied.back(),"memory.tone_original").is_null() &&
@@ -245,10 +269,132 @@ void guards(const fs::path& root) {
     verify_trace(foreign);
     std::cout<<"Permissions: room, cross-archive, revoke between first packet and lookup, and after-revoke requests verified\n";
 }
+
+// 走正式私聊入口形成牛奶纠正和待定经历，压缩后留下跨重启快照。
+// 步骤：收录并改写牛奶场景 → 保留用途不明的经历 → 触发并核对压缩。
+void chat_seed(const fs::path& root) {
+    Replay replay(root/"seed");
+    replay.send("milk",milk,{say(milk_before)});
+    const auto feedback=replay.send("milk-note",milk_feedback,{chat_note(milk_feedback,milk_before),say("就买瓶牛奶还得排二十分钟，换我也烦。")});
+    require(sample(feedback.back(),"memory.tone_pending").at("state")=="draft","casual correction was not staged");
+    replay.send("unclear-chat","真服了。",{say("让我来替你分析一下。")});
+    const auto unclear=replay.send("unclear-chat-note","这句收一点",{chat_note("这句收一点","让我来替你分析一下。"),say("怎么了？")});
+    require(sample(unclear.back(),"memory.tone_pending").at("state")=="unclear","unclear experience became reusable");
+    pad_history(replay);
+    verify_trace(replay,true);
 }
 
-// 按独立进程阶段运行，崩溃样例先留下未结算反馈再从同一档案恢复。
+// 核对当前请求的正文未曝光原件材料，模型自行填写的工具参数不算宿主证据。
+void chat_no_original(const model::Request& request) {
+    require(sample(request,"memory.tone_original").is_null(),"private chat original expanded unexpectedly");
+    for (const auto& message:request.messages)
+        require(message.content.find(milk_feedback)==std::string::npos && message.content.find(milk_reason)==std::string::npos,
+            "private chat original or reason leaked into message text");
+}
+
+// 比较两份同源快照的实际候选、前台首包和下一步按号深查，并回放不同聊天用途。
+// 步骤：核对真实检索 → 用同一脚本记录首包及深查 → 验证求助和用途不明。
+void chat_compare(const fs::path& root,bool enabled) {
+    Replay replay(root,{},enabled);
+    const auto reference=replay.reference("milk-note");
+    const auto routine=replay.send("takeout",takeout,{say("等了一个午休，送到还凉了，确实够烦的。")});
+    require(routine.size()==1,"casual response used an additional request");
+    const auto projected=sample(routine.front(),"memory.tone_candidate");
+    shallow(routine.front(),enabled ? reference : "","memory.tone_candidate");
+    if (enabled) require(projected.at("hint")==milk_hint &&
+        projected.at("condition")=="主人私聊中随口分享日常小烦恼，希望自然接话","paraphrase did not select the milk correction");
+    chat_no_original(routine.front());
+    const auto routine_bytes=sizes(routine);
+
+    const auto audit=replay.send("audit",std::string(takeout)+"刚才用了哪次纠正？",{lookup(reference),say("我查回了当时的纠正。")});
+    require(audit.size()==2,"deep read did not use two requests");
+    chat_no_original(audit.front());
+    const auto original=sample(audit.back(),"memory.tone_original");
+    require(original.at("reference")==reference && original.at("quote")==milk_feedback && original.at("reason")==milk_reason &&
+        original.at("basisReference")==reference && original.contains("rewriteReference"),"deep read lost its source or annotation");
+    std::cout<<Json{{"group",enabled ? "B" : "A"},{"reference",reference},{"candidateFirst",enabled ? Json(1) : Json(nullptr)},
+        {"firstPacketCandidate",projected},{"normalBytes",routine_bytes},{"originalFirst",2},{"reasonFirst",2},{"auditBytes",sizes(audit)},
+        {"quote",original.at("quote")},{"reason",original.at("reason")}}.dump(-1,' ',true)<<'\n';
+
+    if (enabled) {
+        shallow(replay.send("rain","今天下班一路淋雨，跟你发个牢骚。",{say()}).front(),reference,"memory.tone_candidate");
+        const std::string help="外卖送来凉了，帮我写两句发给商家。";
+        const auto answer=say("您好，外卖送到时已经凉了，能帮忙处理一下吗？");
+        auto request=replay.send("help",help,{answer}).front();
+        shallow(request,{},"memory.tone_candidate");
+        chat_no_original(request);
+        request=replay.send("mixed","先跟你嘀咕两句。"+help,{answer}).front();
+        require(sample(request,"memory.tone_candidate")==projected &&
+            model::encode_request_fields(request,false).find(help)!=std::string::npos,"mixed intent lost its conditional candidate or explicit request");
+        chat_no_original(request);
+        request=replay.send("unclear","真服了。",{say("怎么了？")}).front();
+        shallow(request,{},"memory.tone_candidate");
+        chat_no_original(request);
+        std::cout<<"Chat intents: explicit help and unclear sent no candidate; mixed intent kept the conditional candidate and the explicit request\n";
+    }
+    verify_trace(replay);
+}
+
+// 核对候选、引用及正文均未从宿主交给当前不获准的受众。
+void chat_withheld(const model::Request& request,const std::string& reference) {
+    shallow(request,{},"memory.tone_candidate");
+    chat_no_original(request);
+    for (const auto& message:request.messages)
+        require(message.content.find(reference)==std::string::npos,"private chat reference leaked");
+}
+
+// 先在同档案私聊命中，再用房间、在途撤权和独立档案验证披露边界。
+// 步骤：建立获准对照 → 复查房间受众 → 撤权并试读 → 换档案试读。
+void chat_guards(const fs::path& root) {
+    Replay replay(root/"guards");
+    const auto reference=replay.reference("milk-note");
+    shallow(replay.send("authorized",takeout,{say()}).front(),reference,"memory.tone_candidate");
+    const auto before_room=replay.requests.size();
+    replay.responses.push_back(say());
+    require(replay.host.post_room_event(app::RoomEvent::addressed,"书房",takeout).state==events::DeliveryState::accepted,"room input rejected");
+    replay.host.advance_plugins(); drain(replay.host);
+    require(replay.requests.size()==before_room+1 && replay.responses.empty(),"room did not reach backend");
+    chat_withheld(replay.requests.back(),reference);
+    for (const auto& tool:replay.requests.back().tools) require(tool.name!="memory_search","private lookup available in room");
+
+    revoke_inflight(replay,takeout,reference);
+    shallow(replay.requests.back(),reference,"memory.tone_candidate");
+    chat_withheld(replay.send("after-revoke",takeout,{say()}).front(),reference);
+    for (const auto& request:replay.send("denied-audit",takeout,{lookup(reference),say()})) chat_withheld(request,reference);
+    verify_trace(replay);
+
+    Replay foreign(root/"foreign");
+    require(foreign.db->conversation()!=replay.db->conversation(),"foreign replay reused the source profile");
+    for (const auto& request:foreign.send("foreign",takeout,{lookup(reference),say()})) chat_withheld(request,reference);
+    verify_trace(foreign);
+    std::cout<<"Chat permissions: room and cross-profile disclosed nothing; in-flight revocation stopped the next packet; recall and deep lookup stayed empty after revocation\n";
+}
+
+// 冷启动验证用途不明，确认能命中后再次重开，在首包送入 Agent 前撤权。
+// 步骤：对照冷启动的两种用途 → 重开前述档案并撤权 → 核对首包。
+void chat_preflight(const fs::path& root) {
+    {
+        Replay replay(root/"preflight","preflight-before");
+        const auto reference=replay.reference("milk-note");
+        chat_withheld(replay.send("cold-unclear","真服了。",{say("怎么了？")}).front(),reference);
+        shallow(replay.send("select-before-restart",takeout,{say()}).front(),reference,"memory.tone_candidate");
+        verify_trace(replay);
+    }
+    Replay replay(root/"preflight");
+    const auto reference=replay.reference("milk-note");
+    replay.host.main_messages()->change_memory(reference,std::nullopt);
+    chat_withheld(replay.send("before-submission",takeout,{say()}).front(),reference);
+    verify_trace(replay);
+    std::cout<<"Cold unclear and revocation before the first submission after restart: no private content or reference\n";
+}
+}
+
+// 按独立进程阶段回放项目与普通私聊，项目崩溃样例沿原档案恢复。
 void tone_replay(const fs::path& root,std::string_view phase) {
+    if (phase=="chat-seed") {chat_seed(root); return;}
+    if (phase=="chat-A" || phase=="chat-B") {chat_compare(root/std::string(phase.substr(5)),phase=="chat-B"); return;}
+    if (phase=="chat-guards") {chat_guards(root); return;}
+    if (phase=="chat-preflight") {chat_preflight(root); return;}
     if (phase=="seed") {seed(root); return;}
     if (phase=="A" || phase=="B") {compare(root/std::string(phase),phase=="B"); return;}
     if (phase=="guards") {guards(root); return;}

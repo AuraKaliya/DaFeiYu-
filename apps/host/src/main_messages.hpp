@@ -19,7 +19,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
   public:
     // 绑定独占目录的当前实例和原业务线程。
     MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance, SoftwareLog* log,
-        RunLog* trace, bool structured, std::shared_ptr<TaskReflection> reflection);
+        RunLog* trace, bool structured, std::shared_ptr<TaskReflection> reflection, bool recall_casual_tone);
     // 释放本档案为持久信件开设的进程期通知地址。
     ~MainMessages();
     // 子会话寄信后唤醒送信泵。
@@ -143,6 +143,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::optional<TaskResume> incoming_task_;
     std::optional<agent::DecisionStatusSource> search_result_;
     std::optional<std::string> tone_read_,tone_pending_;
+    const bool recall_casual_tone_;
     bool tone_due_=true,tone_context_current_=true;
     std::optional<std::pair<agent::RunId,nlohmann::json>> watched_task_;
     std::deque<nlohmann::json> unsaved_tasks_;

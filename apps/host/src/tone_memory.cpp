@@ -5,6 +5,17 @@ using Json = nlohmann::json;
 using namespace message_db;
 namespace {
 constexpr std::size_t evidence_bytes = 2048;
+constexpr std::string_view casual_condition = "casual_share";
+constexpr std::string_view casual_description = "主人私聊中随口分享日常小烦恼，希望自然接话";
+
+// 将不同话题里的常见分享措辞归到同一聊天用途，供范围核验与候选查找。
+bool casual_share(std::string_view text) {
+    for (const std::string_view cue : {"吐槽一下","跟你吐槽","随口吐槽","跟你嘀咕","发个牢骚",
+         "随口说说","跟你说件小事","顺着我说的聊","听我抱怨"}) {
+        if (text.find(cue)!=text.npos) return true;
+    }
+    return false;
+}
 
 // 从有边界的完整登记名定位项目，多个同名或同时指向多个登记对象时保持未知。
 std::string project_of(sqlite3* db, std::string_view prompt) {
@@ -77,7 +88,7 @@ Progress progress_of(std::string_view prompt) {
 }
 
 // 保留一次已核实的反馈；只有根据原件成立的范围才进入待发布状态。
-// 步骤：核对反馈与所指答复 → 绑定登记项目和补证 → 同号保存或补足原记录。
+// 步骤：核对反馈与所指答复 → 核对项目或聊天用途及补证 → 同号保存或补足原记录。
 Json MessageStore::note_tone(std::int64_t message,const Json& proposal) {
     const auto& tone = proposal.at("tone");
     const auto excerpt = proposal.at("excerpt").get<std::string>();
@@ -108,8 +119,10 @@ Json MessageStore::note_tone(std::int64_t message,const Json& proposal) {
     } else if (previous!=message) throw std::invalid_argument("tone: unknown clarification");
 
     const auto target=target_reply(db,previous,reply_id,reply_quote);
-    auto project=project_of(db,target.question);
-    const auto stated=project_of(db,*original);
+    const auto condition=tone.value("condition",std::string{"progress"});
+    const bool casual=condition==casual_condition;
+    auto project=casual ? std::string{} : project_of(db,target.question);
+    const auto stated=casual ? std::string{} : project_of(db,*original);
     if (project.empty()) project=stated;
     if ((!stated.empty() && project!=stated) || (!previous_project.empty() && project!=previous_project))
         throw std::invalid_argument("tone: different project");
@@ -117,9 +130,9 @@ Json MessageStore::note_tone(std::int64_t message,const Json& proposal) {
     withdrawn.bind(1,previous); withdrawn.bind(2,message); withdrawn.bind(3,target.parent); withdrawn.bind(4,target.reply);
     if (withdrawn.next()) throw std::invalid_argument("tone: revoked basis");
 
-    const bool ready=scope=="ongoing" && !project.empty() && progress_of(target.question)!=Progress::other;
+    const bool ready=scope=="ongoing" && (casual ? casual_share(target.question) || casual_share(*original)
+        : !project.empty() && progress_of(target.question)!=Progress::other);
     const auto hint=tone.value("hint",std::string{}),reason=tone.value("reason",std::string{});
-    const auto condition=tone.value("condition",std::string{"progress"});
     if (ready && (!short_text(hint,256) || !short_text(reason,384))) throw std::invalid_argument("tone: missing basis");
     if (ready && condition=="accepted" && original->find("验收")==original->npos && target.question.find("验收")==target.question.npos)
         throw std::invalid_argument("tone: missing acceptance context");
@@ -150,24 +163,31 @@ void MessageStore::settle_tones() {
     )");
 }
 
-// 在同一登记对象下从新到旧核对适用条件，只给一条明确适用的短提示。
+// 优先核对登记项目的适用条件，普通私聊按聊天用途取最新一条候选。
+// 步骤：识别当前线索 → 在本档案查询已发布且获准的纠正 → 选出一条浅层材料。
 Json MessageStore::tone_for(std::string_view prompt) const {
     const auto progress=progress_of(prompt);
-    if (progress==Progress::other) return nullptr;
+    const bool casual=casual_share(prompt);
+    if (progress==Progress::other && !casual) return nullptr;
     std::lock_guard lock(state_->mutex);
-    const auto project=project_of(state_->db,prompt);
-    if (project.empty()) return nullptr;
+    const auto project=progress==Progress::other ? std::string{} : project_of(state_->db,prompt);
+    if (project.empty() && !casual) return nullptr;
     Statement notes(state_->db,"SELECT message,body FROM tone_correction WHERE project=? AND active=1 AND state='ready' ORDER BY message DESC");
     notes.bind(1,project);
     while (notes.next()) {
         const auto body=Json::parse(notes.text(1));
-        if (body.at("condition")=="accepted") {
+        const auto& condition=body.at("condition").get_ref<const std::string&>();
+        if (project.empty() && condition!=casual_condition) continue;
+        if (condition=="accepted") {
             if (progress==Progress::unknown) return nullptr;
             if (progress!=Progress::accepted) continue;
         }
         const auto id=notes.number(0);
+        if (project.empty())
+            return {{"message",id},{"reference",conversation()+"/"+std::to_string(id)},
+                {"condition",casual_description},{"hint",body.at("hint")}};
         return {{"message",id},{"reference",conversation()+"/"+std::to_string(id)},{"project",project},
-            {"condition",body.at("condition")},{"hint",body.at("hint")}};
+            {"condition",condition},{"hint",body.at("hint")}};
     }
     return nullptr;
 }

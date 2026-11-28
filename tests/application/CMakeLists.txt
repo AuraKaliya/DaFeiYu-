@@ -55,7 +55,9 @@ add_test(NAME app.task_resume COMMAND ${CMAKE_COMMAND} "-DPROGRAM=$<TARGET_FILE:
 set_tests_properties(app.task_resume PROPERTIES TIMEOUT 90)
 add_test(NAME app.tone_replay COMMAND ${CMAKE_COMMAND} "-DPROGRAM=$<TARGET_FILE:dfy_task_memory_tests>"
   "-DROOT=${PROJECT_BINARY_DIR}/tests/tone-replay/$<CONFIG>" -P "${CMAKE_CURRENT_SOURCE_DIR}/tone_replay.cmake")
-set_tests_properties(app.tone_replay PROPERTIES TIMEOUT 90)
+add_test(NAME app.private_tone_replay COMMAND ${CMAKE_COMMAND} "-DPROGRAM=$<TARGET_FILE:dfy_task_memory_tests>"
+  "-DROOT=${PROJECT_BINARY_DIR}/tests/private-tone-replay/$<CONFIG>" -DPRIVATE_CHAT=ON -P "${CMAKE_CURRENT_SOURCE_DIR}/tone_replay.cmake")
+set_tests_properties(app.tone_replay app.private_tone_replay PROPERTIES TIMEOUT 90)
 add_test(NAME app.channel_observations COMMAND dfy_task_memory_tests "$<TARGET_FILE:dfy_freight_fixture>" "$<TARGET_FILE:dfy_museum_fixture>"
   "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/channel_observations.jsonl" "${PROJECT_BINARY_DIR}/tests/channel-observations/$<CONFIG>" --channels)
 set_tests_properties(app.channel_observations PROPERTIES TIMEOUT 90)
