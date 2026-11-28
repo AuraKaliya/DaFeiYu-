@@ -73,6 +73,7 @@
 | Agent-上下文-4 | <a id="agent-上下文-4"></a>注册状态 schema，逐决策发布冻结尾注，获准后按版本读回 | 主聊天、工具续行、规划／修订和选定 MC 绑定。隐式项、同值重采、到期、超窗、撤权、换绑、压缩均有独立判定。 | `dcac5ffe`，[7 次决策固定回放](../../modules/agent/tests/loop_projection.cpp) · [主聊天发言前后两版](../../apps/host/tests/persistent_dialogue.cpp) |
 | Agent-上下文-5 | <a id="agent-上下文-5"></a>按任务持续关注或按事件展示次数，合并重复回调 | 第一项领域唤醒覆盖配对玩家审批未执行的终态。实际展示并收到有效模型响应才扣次，原事件与快照仍可查。 | `726c468`、`1c0e320`、`9163655`、`8e62507`，[关注计次](../../modules/agent/tests/decision_status.cpp) · [信箱与模型请求](../../tests/mc-companion/native-world.cjs) |
 | Agent-上下文-6 | <a id="agent-上下文-6"></a>在同一快照读取待办、开发或游戏环境、工具计数和最近核实实效 | 测得 3 个候选、2 个接纳、1 个派发。游戏余量须匹配原工作与原实体；原堆与旁堆有独立玩家实物及三版原快照证据。 | `d7ab6f1`、`dea9fbb`、`a8f6d4a`、`0f87047`、`ef2efb5`，[计数](../../modules/agent/tests/tool_counts.cpp) · [隔离游戏实收](../../tests/mc-companion/playtest-check.cjs) |
+| Agent-上下文-7-投影 | <a id="agent-上下文-7-投影"></a>容量超限时可在实际请求中用宿主摘要替换完整的旧问答 | 保留最近原话、当前状态和原始历史。窗口足够不生成摘要，异常摘要回退到按轮归档。检查点与原件读回由本体接入。 | 纯 CLI Debug 配置的 `agent.loop_projection` 核对同一历史的实际编码大小、保护项和回退。[投影测试](../../modules/agent/tests/loop_projection.cpp) |
 
 ### 从运行问题补齐的验收
 

@@ -442,6 +442,43 @@ void compress_settled() {
     validate_request(input);
 }
 
+// 在同一历史中比较近期摘要、容量充足和摘要失效三条路径。
+// 步骤：构造可归档旧对话 → 复核摘要窗口 → 对照原件、当前目标及回退请求。
+void traceable_recent_dialogue() {
+    Request original{{{Role::user,"最初目标"},{Role::assistant,"已接纳"}}};
+    auto old = sourced_message(MessageSource::human,"买牛奶排了二十分钟");
+    old.source_message = 3;
+    original.messages.push_back(std::move(old));
+    original.messages.push_back({Role::assistant,std::string(4800,'x')});
+    original.messages.back().completed_dialogue_span = 2;
+    original.messages.push_back({Role::user,"这句收一点"});
+    original.messages.push_back({Role::assistant,"我明白了"});
+    original.messages.push_back({Role::user,"现在先确认还没核实的事项"});
+    original.messages.push_back(sourced_message(MessageSource::host_status,"W17 的实际效果未知"));
+    constexpr ContextWindow small{2000,256,56,false};
+    auto baseline = original;
+    fit_context_request(baseline,small);
+    unsigned calls = 0;
+    const DialogueSummary summarize = [&](std::span<const Message> dialogue) -> std::optional<std::string> {
+        ++calls;
+        check(dialogue.size()==2 && dialogue.front().source_message==3 && dialogue.back().content.size()==4800,
+            "recent summary received unsettled material or lost its original identity");
+        return R"({"source":"recent_dialogue","reference":"profile/3","topic":"买牛奶时排队"})";
+    };
+    auto result = original;
+    fit_context_request(result,small,0,summarize);
+    check(calls==1 && result.messages[2].source==MessageSource::host_summary && contains(result,"profile/3") &&
+        contains(result,"这句收一点") && contains(result,"现在先确认还没核实的事项") && contains(result,"W17 的实际效果未知") &&
+        encode_request_fields(result,false).size()<encode_request_fields(baseline,false).size(),"recent summary did not preserve protected material");
+    auto roomy = original;
+    fit_context_request(roomy,{12000,256,56,false},0,summarize);
+    check(calls==1 && roomy.messages[3].content.size()==4800,"summary ran while the original request fit");
+    auto fallback = original;
+    fit_context_request(fallback,small,0,[](auto) { return std::string(2049,'x'); });
+    check(encode_request_fields(fallback,false)==encode_request_fields(baseline,false) && original.messages[3].content.size()==4800,
+        "invalid summary modified the archive or the fallback");
+}
+
 // 在普通与带工具的思考会话中越过 512 轮，核对实际送模的历史归属和按位置读回的原件。
 // 步骤：连续提交固定问答 → 冻结最后一轮请求 → 对照每组原话、回答、角色及保护边界。
 void long_dialogue(bool thinking) {
@@ -617,7 +654,7 @@ void reasoning_budget() {
 int main() {
     try {
         source_boundaries(); source_times(); replay(); decision_read(); decision_read_revoked(); counted_responses(); status_versions(); compress_settled(); long_dialogue(false); long_dialogue(true);
-        mixed_dialogue(false); mixed_dialogue(true);
+        mixed_dialogue(false); mixed_dialogue(true); traceable_recent_dialogue();
         long_answers(26,7500,0); long_answers(12,300,14*1024);
         reasoning_budget();
         batch_capacity(0,0,false); batch_capacity(768,0,true); batch_capacity(768,4096,false);

@@ -10,6 +10,7 @@
 #include <dafeiyu/decision_status.hpp>
 #include <dafeiyu/turn_input.hpp>
 #include <dafeiyu/prompt_rules.hpp>
+#include <dafeiyu/context_capacity.hpp>
 
 namespace dfy::agent {
 class ObservationController;
@@ -95,6 +96,10 @@ struct RunOptions {
     std::optional<model::MessageSource> prompt_source;
     // 原话的渠道时间可随准入传入，后续事件的 UTC 时钟独立于期限和预算。
     std::optional<std::int64_t> prompt_utc_ms;
+    std::uint64_t prompt_message = 0;
+    DialogueSummary summarize_dialogue;
+    // 在完整请求通过容量复核后通知宿主保存本次使用的摘要检查点。
+    std::function<void(const model::Request&)> save_dialogue_summary;
     MessageClock message_clock;
     // 宿主固定的输出去向及人格表达，按当前用途装配到正式系统段。
     std::optional<PromptRules> prompt_rules;

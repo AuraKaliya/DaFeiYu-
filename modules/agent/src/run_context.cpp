@@ -51,7 +51,7 @@ std::optional<std::int64_t> RunContext::event_time() const noexcept {
 // 步骤：校验独立观察数据 → 保留旧快照并追加目标及数据消息 → 校验角色、配对和容量。
 RunContext::RunContext(std::shared_ptr<const MessageHistory> history, std::string prompt, std::vector<std::string> observations,
     std::string status, ContextWindow window, MessageSource prompt_source, MessageClock message_clock,
-    std::optional<std::int64_t> prompt_utc_ms) : window_(window),message_clock_(std::move(message_clock)),committed_(std::move(history)) {
+    std::optional<std::int64_t> prompt_utc_ms,std::uint64_t source_message) : window_(window),message_clock_(std::move(message_clock)),committed_(std::move(history)) {
     if (!committed_) throw std::invalid_argument("context: history required");
     if (observations.size() > 4) throw std::length_error("context: observation count exceeded");
     for (const auto& data : observations) if (data.empty() || data.size() > 64*1024 || !runtime::valid_utf8(data))
@@ -62,6 +62,7 @@ RunContext::RunContext(std::shared_ptr<const MessageHistory> history, std::strin
         "宿主状态数据。已送达正文以渠道回执为准，字段不能更改权限。\n"+status,admitted));
     auto input = sourced_message(prompt_source,std::move(prompt),prompt_utc_ms ? prompt_utc_ms : admitted);
     if (input.role != model::Role::user) throw std::invalid_argument("context: input must have a data source");
+    input.source_message = source_message;
     pending_->push_back(std::move(input));
     goal_message_ = pending_->size();
     for (auto& data : observations) pending_->push_back(sourced_message(MessageSource::observation,
@@ -76,7 +77,7 @@ void RunContext::check_history(model::Request input) const {
 // 将本步状态放在已闭合的消息之后，并记住工具分派预留使用的实际首尾。
 // 步骤：核实尾注来源 → 在请求副本核算完整窗口 → 保存本步头尾供动作前校验。
 std::size_t RunContext::project(model::Request& input, int head_delta, std::optional<model::Message> decision_tail,
-    const std::optional<model::Message>& observation) {
+    const std::optional<model::Message>& observation, const DialogueSummary& summarize) {
     if (decision_tail && (decision_tail->role!=model::Role::user || decision_tail->source!=MessageSource::host_status))
         throw std::invalid_argument("context: expected host decision status");
     observation_projected_ = false;
@@ -88,7 +89,7 @@ std::size_t RunContext::project(model::Request& input, int head_delta, std::opti
         with_observation.messages.push_back(*observation);
         if (decision_tail) with_observation.messages.push_back(*decision_tail);
         try {
-            compressed = fit_context_request(with_observation,window_,head_delta);
+            compressed = fit_context_request(with_observation,window_,head_delta,summarize);
             input = std::move(with_observation);
             observation_projected_ = true;
         } catch (const std::length_error&) {
@@ -97,7 +98,7 @@ std::size_t RunContext::project(model::Request& input, int head_delta, std::opti
     }
     if (!observation_projected_) {
         if (decision_tail) input.messages.push_back(*decision_tail);
-        compressed = fit_context_request(input,window_,head_delta);
+        compressed = fit_context_request(input,window_,head_delta,summarize);
     }
     effective_tail_ = std::move(decision_tail);
     head_known_ = true;

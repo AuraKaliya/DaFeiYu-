@@ -113,7 +113,7 @@ struct RunLoopState {
         const auto source = options.prompt_source.value_or(options.origin == RunOrigin::mailbox ? model::MessageSource::mailbox :
             options.origin == RunOrigin::observation_rule ? model::MessageSource::host_control : model::MessageSource::human);
         record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs),status,window,source,
-            options.message_clock,options.prompt_utc_ms);
+            options.message_clock,options.prompt_utc_ms,options.prompt_message);
         record->versions_ = public_run_versions(config,options,deadline > now ? std::chrono::duration_cast<std::chrono::milliseconds>(deadline-now) : std::chrono::milliseconds::zero());
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
         record->model_contexts_.reserve(options.policy.model_limit);
@@ -540,14 +540,15 @@ struct RunLoopState {
             };
             const bool baseline = options.replace_history && !record->model_requests_;
             auto projected = input;
-            compressed_batches = record->context_->project(projected,head_delta,freeze(baseline),observation);
+            compressed_batches = record->context_->project(projected,head_delta,freeze(baseline),observation,options.summarize_dialogue);
             const bool compact = compressed_batches || std::ranges::any_of(projected.messages,[](const auto& m) {
                 return m.source==model::MessageSource::host_summary;
             });
             if (!baseline && compact && !sources.empty())
-                compressed_batches = record->context_->project(input,head_delta,freeze(true),observation);
+                compressed_batches = record->context_->project(input,head_delta,freeze(true),observation,options.summarize_dialogue);
             else input = std::move(projected);
-        } else compressed_batches = record->context_->project(input,head_delta,{},observation);
+        } else compressed_batches = record->context_->project(input,head_delta,{},observation,options.summarize_dialogue);
+        if (options.save_dialogue_summary) options.save_dialogue_summary(input);
         capture(ModelCapturePhase::prepared,current.attempt,&input,nullptr,nullptr,runtime::OperationState::pending,&contracts);
         auto request = models.submit_request(config,std::move(input),static_cast<bool>(options.model_capture));
         if (observation_batch && record->context_->observation_projected())

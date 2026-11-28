@@ -1,5 +1,6 @@
 #include <dafeiyu/context_capacity.hpp>
 #include <dafeiyu/model_protocol.hpp>
+#include <dafeiyu/utf8.hpp>
 #include <nlohmann/json.hpp>
 #include <algorithm>
 
@@ -52,7 +53,7 @@ std::size_t dialogue_span(const std::vector<model::Message>& messages, std::size
 // 按连续原始位置组合已完成的普通问答，返回仍有长回答可缩短的组位置。
 // 步骤：跳过原始目标及保护消息 → 按完整轮次组成有界片段 → 写入有归属的历史视图。
 std::vector<std::size_t> pack_dialogue(model::Request& input, const std::vector<std::size_t>& ordinals,
-    std::uint64_t evidence_epoch, bool keep_reasoning) {
+    std::uint64_t evidence_epoch, bool keep_reasoning, const DialogueSummary& summarize, bool& summarized) {
     const auto protected_end = input.messages.front().role == Role::system ? 3u : 2u;
     std::vector<model::Message> view;
     std::vector<std::size_t> large_groups;
@@ -65,7 +66,7 @@ std::vector<std::size_t> pack_dialogue(model::Request& input, const std::vector<
         bool large_answer = false;
         auto turns = nlohmann::json::array();
         while (const auto span = dialogue_span(input.messages,i,keep_reasoning)) {
-            if (i-first+span > 64 || ordinals[i+span-1]-ordinals[first] != i-first+span-1) break;
+            if (i-first+span > (summarize ? 12u : 64u) || ordinals[i+span-1]-ordinals[first] != i-first+span-1) break;
             large_answer |= input.messages[i+span-1].content.size() > 1024;
             const auto& prompt = input.messages[i+span-2];
             const auto key = prompt.source == model::MessageSource::human || prompt.source == model::MessageSource::unknown
@@ -82,6 +83,14 @@ std::vector<std::size_t> pack_dialogue(model::Request& input, const std::vector<
             i += span;
         }
         if (i == first) { view.push_back(std::move(input.messages[i++])); continue; }
+        if (summarize) {
+            auto summary = summarize(std::span(input.messages).subspan(first,i-first));
+            if (summary && !summary->empty() && summary->size()<=2048 && runtime::valid_utf8(*summary)) {
+                view.push_back(model::sourced_message(model::MessageSource::host_summary,std::move(*summary)));
+                summarized = true;
+                continue;
+            }
+        }
         nlohmann::json group{{"source","completed_dialogue"},{"epoch",evidence_epoch},{"first",ordinals[first]},
             {"count",i-first},{"turns",std::move(turns)}};
         if (large_answer) large_groups.push_back(view.size());
@@ -112,8 +121,11 @@ void shorten_answers(model::Message& message) {
 
 // 为已结束的普通问答生成有原件引用的视图，在仍超限时逐组缩短旧长回答。
 // 步骤：合并允许归档的整轮 → 检查逐字视图 → 从较旧回答起缩短到可送模。
-bool fit_dialogue(model::Request& request, const std::vector<std::size_t>& ordinals, ContextWindow window, bool keep_reasoning) {
-    const auto large_groups = pack_dialogue(request,ordinals,window.evidence_epoch,keep_reasoning);
+bool fit_dialogue(model::Request& request, const std::vector<std::size_t>& ordinals, ContextWindow window, bool keep_reasoning,
+    const DialogueSummary& summarize = {}) {
+    bool summarized = false;
+    const auto large_groups = pack_dialogue(request,ordinals,window.evidence_epoch,keep_reasoning,summarize,summarized);
+    if (summarize && !summarized) return false;
     if (fits(request,window)) return true;
     for (auto index : large_groups) {
         shorten_answers(request.messages[index]);
@@ -124,7 +136,7 @@ bool fit_dialogue(model::Request& request, const std::vector<std::size_t>& ordin
 }
 // 计算有界执行视图，按原始位置回查已结算工具批次和已完成的普通问答。
 // 步骤：校验原始容量和输出预留 → 限制回执预览 → 按需归档整批工具及组合问答 → 核验最终请求。
-std::size_t fit_context_request(model::Request& request, ContextWindow window, int head_delta) {
+std::size_t fit_context_request(model::Request& request, ContextWindow window, int head_delta, const DialogueSummary& summarize) {
     if ((window.tokens || window.output) && (!window.output || window.output >= window.tokens || window.tokens > 16*1024*1024))
         throw std::invalid_argument("context: invalid configured model window");
     if (head_delta < -1 || head_delta > 1 || request.messages.size() > 8192 || history_bytes(request) > 8*1024*1024)
@@ -161,6 +173,13 @@ std::size_t fit_context_request(model::Request& request, ContextWindow window, i
     }
     request.messages = std::move(compact);
     if (compressed && fits(request,window)) return compressed;
+    if (summarize) {
+        auto summary = request;
+        if (fit_dialogue(summary,ordinals,window,request.sends_reasoning(window.thinking),summarize)) {
+            request = std::move(summary);
+            return compressed;
+        }
+    }
     if (request.sends_reasoning(window.thinking) && std::ranges::any_of(request.messages,[](const auto& message) {
         return message.completed_dialogue_span && message.reasoning_content.has_value();
     })) {

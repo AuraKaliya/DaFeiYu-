@@ -13,7 +13,7 @@ class RunContext {
     // 从历史创建目标及最多四份观察数据，观察仅按数据消息附加，不授予角色或工具权限。
     RunContext(std::shared_ptr<const MessageHistory> history, std::string prompt, std::vector<std::string> observations = {},
         std::string status = {}, ContextWindow window = {}, model::MessageSource prompt_source = model::MessageSource::human,
-        MessageClock message_clock = {}, std::optional<std::int64_t> prompt_utc_ms = {});
+        MessageClock message_clock = {}, std::optional<std::int64_t> prompt_utc_ms = {}, std::uint64_t source_message = 0);
     // 禁止复制未提交事务，避免两个写入者共享同一待填上下文。
     RunContext(const RunContext&) = delete;
     // 禁止赋值或移动覆盖事务责任，历史快照另行按值持有。
@@ -29,7 +29,7 @@ class RunContext {
         std::span<const std::uint32_t> receipt_views = {}, std::span<const std::uint8_t> archive_on_exit = {});
     // 在实际请求副本末尾冻结宿主状态并核算容量，工具执行前沿用该尾部预留。
     std::size_t project(model::Request& input, int head_delta, std::optional<model::Message> decision_tail = {},
-        const std::optional<model::Message>& observation = {});
+        const std::optional<model::Message>& observation = {}, const DialogueSummary& summarize = {});
     // 返回最近一次实际投影是否容纳被动观察，预算不足时来源游标应保持待送。
     bool observation_projected() const noexcept { return observation_projected_; }
     // 在预留空间内格式化终态及真实效果，不再分配结果正文；拒绝状态与实际执行分开。

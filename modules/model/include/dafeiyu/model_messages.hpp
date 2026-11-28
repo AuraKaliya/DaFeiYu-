@@ -28,6 +28,8 @@ struct Message {
     MessageSource source = MessageSource::unknown;
     // 来源事件的 UTC 毫秒，未提供的旧记录保持未知。
     std::optional<std::int64_t> event_utc_ms;
+    // 本体可附当前档案的实际渠道原件号，仅供本地历史投影使用。
+    std::uint64_t source_message = 0;
 };
 // 按来源建立原生协议角色，保留调用者给出的完整正文。
 Message sourced_message(MessageSource source, std::string content, std::optional<std::int64_t> event_utc_ms = {});
