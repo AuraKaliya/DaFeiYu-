@@ -28,7 +28,7 @@ void KnowledgeProbe::verify(const Json& items,const Json& wanted,bool owner) con
 }
 // 走主聊天决策、工具和实际投递，不通过测试专用存储入口制造草案。
 void KnowledgeProbe::chat(app::Application& host,const Json& input,unsigned id) {
-    row=input; step=0; reply.clear(); host.main_messages()->terminal("kb"+std::to_string(id),"请按原来的依据核对这份做法。");
+    row=input; step=0; reply.clear(); document_text.clear(); host.main_messages()->terminal("kb"+std::to_string(id),"请按原来的依据核对这份做法。");
     task_memory::drain(host); require(!reply.empty(),"owner did not receive knowledge answer"); row=nullptr;
 }
 // 区分提出草案、读到发布版和真正发布三种动作。
@@ -36,6 +36,13 @@ model::Response KnowledgeProbe::answer(const model::Request& input) {
     for(const auto& ignored:row.value("without",Json::array())) for(const auto& message:input.messages)
         require(message.content.find(ignored.get<std::string>())==std::string::npos,"another archive or withdrawn material in model history");
     const auto& terms=row.at("topics");
+    if (row.contains("openSource") && step<2)
+        require(input.messages.back().content.find(R"("key":"knowledge.original")")==std::string::npos,"external source arrived without a query");
+    // 从实际回复给出的续读位置沿同一原件发起下一次固定查回。
+    const auto open_source=[&](std::size_t offset)->model::Response {
+        Json args{{"topics",{resolve(row.at("openSource").at("ref"))}},{"view","knowledge_source"},{"need","single"},{"count",1},{"offset",offset}};
+        return {{model::Role::assistant,"",{{"source-"+std::to_string(step),"memory_search",args.dump()}}},model::FinishReason::tool_calls};
+    };
     if (++step==1) {
         require(std::ranges::any_of(input.tools,[](const auto& t){return t.name=="knowledge_propose";}) &&
             std::ranges::none_of(input.tools,[](const auto& t){return t.name=="knowledge_publish";}),"wrong owner chat authority");
@@ -75,9 +82,30 @@ model::Response KnowledgeProbe::answer(const model::Request& input) {
             auto observation=row.at("observation"); observation["reference"]=resolve(observation.at("reference"));
             return {{model::Role::assistant,"",{{"observe","knowledge_observe",observation.dump()}}},model::FinishReason::tool_calls};
         }
+        if (row.contains("openSource")) return open_source(0);
     } else {
         const auto receipt=std::ranges::find_if(input.messages.rbegin(),input.messages.rend(),[](const auto& m){return m.role==model::Role::tool;});
-        require(receipt!=input.messages.rend() && receipt->content.find(row.value("state",std::string{"recorded"}))!=std::string::npos,"wrong proposal outcome");
+        const auto state=row.value("state",std::string{row.contains("openSource") ? "ready" : "recorded"});
+        require(receipt!=input.messages.rend() && receipt->content.find(state)!=std::string::npos,"wrong tool outcome");
+        if (row.contains("openSource") && state!="ready")
+            require(input.messages.back().content.find(R"("key":"knowledge.original")")==std::string::npos,"unauthorized source was projected");
+        if (row.contains("openSource") && state=="ready") {
+            const auto status=Json::parse(input.messages.back().content);
+            const auto& samples=status.at("items");
+            const auto found=std::ranges::find_if(samples,[](const auto& s){return s.at("key")=="knowledge.original";});
+            require(found!=samples.end(),"source page was not projected");
+            const auto& page=found->at("value").at("items");
+            const auto& spec=row.at("openSource"),&item=page.at(0);
+            const auto original=spec.at("text").get<std::string>()+std::string(spec.value("padding",0u),'x');
+            require(page.size()==1 && page.dump().size()<=2048 && item.at("reference")==resolve(spec.at("ref")) &&
+                item.at("title")==spec.at("title") && item.at("origin")==spec.at("origin") && item.at("sha256")==platform::sha256(original),"wrong document evidence");
+            document_text+=item.at("quote").get<std::string>();
+            if (item.contains("nextOffset")) {
+                require(item.at("nextOffset")==document_text.size() && document_text.size()<original.size(),"wrong source page boundary");
+                return open_source(document_text.size());
+            }
+            require(document_text==original,"document pages did not reproduce the original bytes");
+        }
         if (row.contains("saveArticle")) {
             constexpr std::string_view delimiter="\noutput:\n";
             const auto first=receipt->content.find(delimiter); require(first!=std::string::npos,"missing observation result");
@@ -93,10 +121,12 @@ void KnowledgeProbe::admin(app::Application& host,const Json& input,const std::f
     auto cmd=input.at("command").get<std::string>();
     for(auto it=references.rbegin();it!=references.rend();++it)
         if(auto p=cmd.find(it->first);p!=cmd.npos) cmd.replace(p,it->first.size(),it->second);
+    std::string bytes;
     if (input.contains("file")) {
         const auto path=std::filesystem::absolute(directory/"external source.md");
         std::ofstream fixture(path,std::ios::binary|std::ios::trunc);
-        require(static_cast<bool>(fixture<<input.at("file").get<std::string>()),"cannot prepare the external source");
+        bytes=input.at("file").get<std::string>()+std::string(input.value("padding",0u),'x');
+        require(static_cast<bool>(fixture<<bytes),"cannot prepare the external source");
         const auto encoded=path.u8string();
         cmd+=" \""+std::string(encoded.begin(),encoded.end())+"\"";
     }
@@ -111,7 +141,7 @@ void KnowledgeProbe::admin(app::Application& host,const Json& input,const std::f
             require(result.at(key)==(value.is_string() ? Json(resolve(value)) : value),"wrong administrative outcome");
     if (input.contains("save")) {
         references[input.at("save").get<std::string>()]=result.at("reference").get<std::string>();
-        require(result.at("sha256")==platform::sha256(input.at("file").get<std::string>()),"incorrect document digest");
+        require(result.at("sha256")==platform::sha256(bytes),"incorrect document digest");
     }
     if (input.contains("document")) {
         for (const auto& [key,value] : input.at("document").items()) require(result.at(key)==value,"incorrect original document");
@@ -123,7 +153,7 @@ void KnowledgeProbe::admin(app::Application& host,const Json& input,const std::f
         const auto& item=result.at("editions").at(0);
         for(const auto& [k,v] : input.at("inspect").items())
             require(item.at(k)==(v.is_string() ? Json(resolve(v)) : v),"incorrect audit detail "+k);
-        if (item.value("evidenceUnavailable",false)) require(!item.contains("statement"),"revoked content in review");
+        if (item.value("evidenceUnavailable",false)) require(!item.contains("statement") && !item.contains("check"),"revoked content in review");
     }
 }
 }

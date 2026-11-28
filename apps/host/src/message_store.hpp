@@ -102,6 +102,8 @@ class MessageStore {
         const std::string& origin,const std::string& body);
     // 只给主人按完整编号返回仍有权查阅的原件。
     nlohmann::json inspect_knowledge_document(const std::string& reference) const;
+    // 按当前授权和完整版本号生成一页外部原件证据。
+    nlohmann::json knowledge_document_page(const std::string& reference,std::size_t offset) const;
     // 停用外部原件并推进授权修订，使引用它的版本一并退出检索。
     bool withdraw_knowledge_document(const std::string& reference);
     // 在同一事务校验当前版本及全部原件后发布或撤下，变更只由管理入口发起。

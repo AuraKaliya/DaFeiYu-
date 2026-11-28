@@ -106,6 +106,13 @@
 {"op":"admin","command":"/knowledge source @doc","document":{"title":"展馆手册 v1","origin":"展馆业务部通知","text":"# 交接\r\n展厅每周三交接。\n独立留存的备注。\n"}}
 {"op":"admin","command":"/knowledge source ffffffffffffffffffffffffffffffff/document/manual/v1","deny":true}
 {"op":"kb","topics":["文件规程"],"expect":[{"article":"external-file","edition":"v1","revision":1,"statement":"每周三交接","claimKind":"external","kinds":["external_document"],"refs":["@doc"]}]}
+{"op":"kb","topics":["文件规程"],"expect":[{"article":"external-file","kinds":["external_document"],"refs":["@doc"]}],"openSource":{"ref":"@doc","title":"展馆手册 v1","origin":"展馆业务部通知","text":"# 交接\r\n展厅每周三交接。\n独立留存的备注。\n"}}
+{"op":"admin","command":"/knowledge import manual-long v2 \"手册长原件\" \"仓管组\"","file":"第一条：周三交接。\r\n","padding":3300,"save":"@long-doc"}
+{"op":"admin","command":"/knowledge propose-in external external external-long-file v2 0 总部手册全文 总部手册 \"条款见原件\" @long-doc"}
+{"op":"admin","command":"/knowledge publish external-long-file v2","revision":1}
+{"op":"kb","topics":["文件规程"],"expect":[{"article":"external-file","kinds":["external_document"],"refs":["@doc"]}],"openSource":{"ref":"ffffffffffffffffffffffffffffffff/document/manual/v1"},"state":"unavailable"}
+{"op":"restart"}
+{"op":"kb","topics":["总部手册全文"],"expect":[{"article":"external-long-file","kinds":["external_document"],"refs":["@long-doc"]}],"openSource":{"ref":"@long-doc","title":"手册长原件","origin":"仓管组","text":"第一条：周三交接。\r\n","padding":3300}}
 {"op":"open","session":"docReader","preset":2,"subject":"document-reader"}
 {"op":"select_kb","session":"docReader","topic":"文件规程"}
 {"op":"run","session":"docReader","expect":[],"knowledge":[]}
@@ -117,6 +124,7 @@
 {"op":"admin","command":"/knowledge withdraw-source @doc"}
 {"op":"admin","command":"/knowledge source @doc","deny":true}
 {"op":"admin","command":"/knowledge inspect external-file v1","revision":1,"inspect":{"evidenceUnavailable":true}}
+{"op":"kb","topics":["@doc"],"view":"knowledge_source","sample":"knowledge.original","rejected":"invalid_query"}
 {"op":"kb","topics":["文件规程"],"expect":[]}
 {"op":"kb","topics":["文件规程"],"expect":[],"observation":{"library":"field","reference":"@second"},"state":"invalid_observation"}
 {"op":"admin","command":"/knowledge record-observation external @second","deny":true}
@@ -145,4 +153,5 @@
 {"op":"admin","command":"/knowledge publish panel-checked v2","revision":3}
 {"op":"kb","topics":["面板读回规律"],"expect":[{"article":"panel-checked","edition":"v2","revision":3,"verification":"checked_samples","applies":"动作 example.status/set_focus，独立读口 example.status/read。任务目标为「focus」。","kinds":["tool_readback","tool_readback"],"refs":["@readback","@second"]}]}
 {"op":"admin","command":"/memory revoke @second-task"}
+{"op":"admin","command":"/knowledge inspect panel-checked v2","revision":3,"inspect":{"evidenceUnavailable":true}}
 {"op":"kb","topics":["面板读回规律"],"expect":[]}

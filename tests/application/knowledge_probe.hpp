@@ -10,6 +10,7 @@ struct KnowledgeProbe {
     Json row;
     unsigned step=0;
     std::string reply;
+    std::string document_text;
     // 将测试别名解析成此次档案实际交付的原件身份。
     std::string resolve(const std::string& alias) const;
     // 在普通主人来信中发出一次读取及可选的草案提议，并核对真实答复。

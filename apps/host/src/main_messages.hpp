@@ -134,7 +134,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::optional<agent::DecisionStatusSource> restored_recent_context();
     // 在每次送模前读取当前实际受众可用的语气材料。
     std::optional<agent::DecisionStatusSource> tone_projection(std::string_view prompt,bool first_decision) const;
-    // 每轮提交一批检索证据，浅层主题可另按本轮已见编号展开一次。
+    // 每轮先选一批证据，有出处的主题和文档可按原号展开。
     std::unique_ptr<agent::ToolWork> search_memory(const agent::ToolInvocation& invocation);
     // 仅用本轮上一决策可见的两份原件提交复盘关系。
     std::unique_ptr<agent::ToolWork> reflect_memory(const agent::ToolInvocation& invocation);

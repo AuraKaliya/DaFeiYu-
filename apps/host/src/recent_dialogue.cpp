@@ -111,6 +111,21 @@ Json MessageStore::restored_dialogue() const {
     return result;
 }
 
+// 在实收编码预算内切一段原文，偏移只按完整 UTF-8 字符前进。
+Json message_db::original_page(Json item,std::string_view text,std::size_t offset) {
+    if (offset>text.size() || (offset<text.size() && (static_cast<unsigned char>(text[offset])&0xc0)==0x80))
+        throw std::invalid_argument("memory: invalid source byte offset");
+    for (auto bytes=std::min(text.size()-offset,std::size_t{2048});;) {
+        auto end=offset+bytes;
+        while (end>offset && end<text.size() && (static_cast<unsigned char>(text[end])&0xc0)==0x80) --end;
+        item["quote"]=text.substr(offset,end-offset);
+        if (end<text.size()) item["nextOffset"]=end; else item.erase("nextOffset");
+        if (item.dump().size()+2<=2048) return {{"items",Json::array({std::move(item)})},{"limited",end<text.size()}};
+        if (!bytes) throw std::invalid_argument("memory: original source metadata exceeds page budget");
+        bytes/=2;
+    }
+}
+
 // 从曾经实际采用的摘要按原号分段读回，来信撤权时同时封住关联答复。
 // 步骤：校验档案号 → 重验原件及来信权限 → 按 UTF-8 边界与证据预算截取。
 Json MessageStore::recent_original(std::string_view reference,std::size_t offset) const {
@@ -121,17 +136,8 @@ Json MessageStore::recent_original(std::string_view reference,std::size_t offset
     source.bind(1,id);
     if (!source.next()) return nullptr;
     const auto text=Json::parse(source.text(0)).at("text").get<std::string>();
-    if (offset>text.size() || (offset<text.size() && (static_cast<unsigned char>(text[offset])&0xc0)==0x80))
-        throw std::invalid_argument("context: invalid byte offset");
-    Json item{{"reference",reference},{"topic","近期对话"},{"source",source.number(2)==id ? "human" : "model"},{"utcMs",source.number(1)}};
-    for (auto bytes=std::min(text.size()-offset,std::size_t{2048});;) {
-        auto end=offset+bytes;
-        while (end>offset && end<text.size() && (static_cast<unsigned char>(text[end])&0xc0)==0x80) --end;
-        item["quote"]=text.substr(offset,end-offset);
-        if (end<text.size()) item["nextOffset"]=end; else item.erase("nextOffset");
-        if (item.dump().size()+2<=2048) return {{"items",Json::array({std::move(item)})},{"limited",end<text.size()}};
-        bytes/=2;
-    }
+    return original_page({{"reference",reference},{"topic","近期对话"},{"source",source.number(2)==id ? "human" : "model"},
+        {"utcMs",source.number(1)}},text,offset);
 }
 
 // 清空显式会话时让已保存的摘要退出恢复路径。

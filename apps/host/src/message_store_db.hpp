@@ -37,6 +37,8 @@ std::vector<std::string> withdraw_challenged_knowledge(sqlite3* db,std::int64_t 
 void index_recent_origins(sqlite3* db);
 // 在实际送达事务中为已有检查点保存之后结算的私聊原件号。
 void index_recent_reply(sqlite3* db,std::int64_t reply,std::string_view parent);
+// 用同一编码预算分段读取原件，返回下一段的 UTF-8 字节位置。
+nlohmann::json original_page(nlohmann::json item,std::string_view text,std::size_t offset);
 // 将系统返回码映射为可公开核对的失败，避免泄漏 SQL 参数或消息正文。
 inline void check(int code) {
     if (code!=SQLITE_OK) throw std::runtime_error("messages: SQLite error "+std::to_string(code));

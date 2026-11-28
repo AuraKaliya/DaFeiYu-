@@ -223,6 +223,13 @@ Json MessageStore::inspect_knowledge_document(const std::string& reference) cons
     return {{"reference",reference},{"title",get.text(0)},{"origin",get.text(1)},{"sha256",get.text(2)},{"text",get.text(3)}};
 }
 
+// 保留资料版本、标题、声明出处和原字节指纹，只按请求交付一段正文。
+Json MessageStore::knowledge_document_page(const std::string& reference,std::size_t offset) const {
+    auto document=inspect_knowledge_document(reference);
+    const auto text=document.at("text").get<std::string>(); document.erase("text");
+    return original_page(std::move(document),text,offset);
+}
+
 // 撤权和授权修订同事务生效，重试不会复活原件或再次推进修订。
 bool MessageStore::withdraw_knowledge_document(const std::string& reference) {
     std::lock_guard lock(state_->mutex); auto* db=state_->db; Transaction tx(db);
@@ -397,20 +404,19 @@ Json MessageStore::inspect_knowledge(const std::string& article,const std::strin
     while(rows.next()) {
         Json item{{"edition",rows.text(1)},{"base",rows.number(2)},{"publishedRevision",rows.number(3)},{"current",rows.number(0)==get.number(1)},
             {"claimKind",rows.text(8)},{"publisher",rows.number(3) ? rows.text(9) : std::string{}}};
-        const auto verified=rows.text(10);
-        if (!verified.empty()) {
-            const auto rule=Json::parse(verified);
-            const auto contrary=counterexample(db,rule);
-            if (!contrary.empty()) {
-                item["current"]=false;
-                if (!tag.empty()) item["counterexampleReference"]=conversation()+contrary;
-            }
-            if (!tag.empty()) item["check"]=rule.at("check");
-        }
         if (!tag.empty()) {
             Json refs=Json::array();
             if (references(db,conversation(),rows.number(0),refs)) {
                 item["topic"]=rows.text(4); item["applies"]=rows.text(5); item["statement"]=rows.text(6); item["proposer"]=rows.text(7); item["sources"]=refs;
+                const auto verified=rows.text(10);
+                if (!verified.empty()) {
+                    const auto rule=Json::parse(verified);
+                    item["check"]=rule.at("check");
+                    if (const auto contrary=counterexample(db,rule);!contrary.empty()) {
+                        item["counterexampleReference"]=conversation()+contrary;
+                        item["current"]=false;
+                    }
+                }
             } else item["evidenceUnavailable"]=true;
         }
         result["editions"].push_back(std::move(item));

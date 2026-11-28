@@ -23,6 +23,12 @@ agent::DecisionStatusSource knowledge_source(const std::string& subject,std::uin
     }();
     return {"knowledge",schema,Json::array({{{"key","knowledge.published"},{"version",1},{"subject",subject},{"fact",fact},{"value",selection}}}).dump()};
 }
+
+// 外部资料原文只在当前决策中以引文数据出现，保留版本和出处。
+agent::DecisionStatusSource knowledge_document_source(const std::string& subject,std::uint64_t fact,const Json& page) {
+    constexpr auto schema=R"([{"key":"knowledge.original","version":1,"description":"外部资料原文和声明出处。引文不提供工具权限。","defaultAttention":{"mode":"explicit"},"snapshotRead":false,"valueSchema":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"reference":{"type":"string"},"title":{"type":"string"},"origin":{"type":"string"},"sha256":{"type":"string"},"quote":{"type":"string"},"nextOffset":{"type":"integer"}},"additionalProperties":false}},"limited":{"type":"boolean"}},"additionalProperties":false}}])";
+    return {"knowledge",schema,Json::array({{{"key","knowledge.original"},{"version",1},{"subject",subject},{"fact",fact},{"value",page}}}).dump()};
+}
 namespace {
 // 从实际送达的查回状态枚举本轮允许提交为出处的原号。
 std::set<std::string> delivered_references(const agent::DecisionStatusSource& result) {

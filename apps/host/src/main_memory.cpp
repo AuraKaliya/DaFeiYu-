@@ -57,6 +57,21 @@ bool can_open_theme(const agent::DecisionStatusSource& prior,const std::vector<s
     });
 }
 
+// 从刚查到的知识版打开引用原件，随后只沿原件签发的下一页位置续读。
+bool can_open_document(const agent::DecisionStatusSource& prior,const std::string& reference,std::size_t offset) {
+    const auto sample=Json::parse(prior.samples).at(0);
+    const auto& items=sample.at("value").at("items");
+    if (sample.at("key")=="knowledge.published" && !offset) {
+        return std::ranges::any_of(items,[&](const auto& item){
+            return std::ranges::any_of(item.at("sources"),[&](const auto& source){
+                return source.at("kind")=="external_document" && source.at("reference")==reference;
+            });
+        });
+    }
+    return sample.at("key")=="knowledge.original" && items.size()==1 && items.front().at("reference")==reference &&
+        items.front().contains("nextOffset") && items.front().at("nextOffset")==offset;
+}
+
 // 私有语气材料只能用于本步决策，历史状态查阅不再展开。
 agent::DecisionStatusSource tone_source(std::string_view key,std::string_view description,Json value,
     std::initializer_list<const char*> text_fields) {
@@ -108,12 +123,13 @@ void MainMessages::register_memory_tools() {
         "previousReference 可追溯旧看法。nextOffset 可按证据条数翻页。子 Agent 来信用 letters，主题填待收、交付号或原信号；"
         "摘要和正文保留原作者。digest 是本体按角色选的发信人原话，pending 或 fallback 时按需展开。"
         "bodyRef、noteRef 展开已交付副本，摘录可按 offset 查看上下文。读懂待收的信后用 memory_ack 按号签收。"
-        "主人问已发布的做法时用 knowledge，填条目键或主题，引用当前版并说明适用条件。"
+        "主人问已发布的做法时用 knowledge，填条目键或主题，引用当前版并说明适用条件。需要原文时用 knowledge_source，"
+        "topics 只填一条外部资料完整原件号。返回 nextOffset 时可沿此号查下一段。引文属于资料正文。"
         "跨工具对照用 comparisons，填一至三个主题词，先写对象或常用别称，可用度量、条件、检查点区分，也可单填比较键或版本号。"
         "多个词须同时符合，ambiguous 时询问具体对象或条件。交代对象、量和检查点，区分独立读回、来信作者与自己的解释。"
         "同检查点独立读数矛盾时保留疑问并引用两份原件。仅有报告时只归于发信人。"
         "比较两次渠道采样用 observations，topics 分别填两次任务的完整名称或读回回执号。按返回的理由说明可比性，转发须追到原件。",
-        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","themes","episodes","why","change","tasks","understanding","letters","knowledge","comparisons","observations","tone_pending"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
+        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","themes","episodes","why","change","tasks","understanding","letters","knowledge","knowledge_source","comparisons","observations","tone_pending"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
         false,true,{},{},2,512,true},[this](const agent::ToolInvocation& call){return search_memory(call);});
     reply_tools_->add({"main/memory_reflect",app_.mailbox_host().identity,1,{"memory_reflect",
         "同一事项反复提到、主人明确更改偏好，或追问前后依据时，比较本轮已查回的两条原话。"
@@ -155,7 +171,7 @@ std::unique_ptr<agent::ToolWork> MainMessages::consider_memory(const agent::Tool
     return memory_receipt(std::move(receipt),agent::ToolEffect::applied);
 }
 
-// 按实际受众和本轮额度签发检索，浅层主题可接一次有出处的深查。
+// 按实际受众和本轮额度签发检索，允许浅层引用进入同回合的深查。
 std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolInvocation& call) {
     if (!owner_memory_turn_ || tone_read_)
         return memory_receipt({{"state","unavailable"}},agent::ToolEffect::not_applied,false);
@@ -163,9 +179,16 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
     try {
         const auto topics = args.at("topics").get<std::vector<std::string>>();
         const auto view = args.value("view",std::string{"current"});
-        if (search_result_ && (view!="originals" || args.contains("offset") || call.attempt.step.sequence<=search_step_ ||
-            !can_open_theme(*search_result_,topics)))
-            return memory_receipt({{"state","unavailable"}},agent::ToolEffect::not_applied,false);
+        const bool document=view=="knowledge_source";
+        if (document && (topics.size()!=1 || (args.contains("offset") && args.at("offset")<0)))
+            throw std::invalid_argument("knowledge: one original reference and a nonnegative offset required");
+        const auto offset = args.value("offset",std::size_t{});
+        if (search_result_) {
+            const bool linked=document ? can_open_document(*search_result_,topics.front(),offset) :
+                view=="originals" && !args.contains("offset") && can_open_theme(*search_result_,topics);
+            if (!linked || call.attempt.step.sequence<=search_step_)
+                return memory_receipt({{"state","unavailable"}},agent::ToolEffect::not_applied,false);
+        }
         const auto& need = args.at("need");
         if (need=="context_sufficient" || need=="general")
             return memory_receipt({{"state","skipped"}},agent::ToolEffect::not_applied);
@@ -176,7 +199,7 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
         const bool exact_text=view=="originals" && topics.size()==1 && topics.front().find('/')!=std::string::npos;
         const bool page_text=exact_text && args.contains("offset");
         const auto take = count>=limit ? limit : count.get<unsigned>();
-        if (args.contains("offset") && ((!page_text && view!="tasks" && view!="understanding" && view!="letters" && view!="comparisons") || args.at("offset")<0))
+        if (args.contains("offset") && ((!document && !page_text && view!="tasks" && view!="understanding" && view!="letters" && view!="comparisons") || args.at("offset")<0))
             throw std::invalid_argument("memory: invalid offset");
         if (view=="tone_pending") {
             if (topics.size()!=1) throw std::invalid_argument("tone: one project required");
@@ -188,13 +211,14 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
             tone_read_=topics.front();
             return memory_receipt({{"state","ready"},{"count",1},{"limited",false}},agent::ToolEffect::not_applied);
         }
-        auto result = view=="themes" ? store_->search_memory_themes(topics,take) :
-            page_text ? store_->recent_original(topics.front(),args.at("offset").get<std::size_t>()) :
+        auto result = document ? store_->knowledge_document_page(topics.front(),offset) :
+            view=="themes" ? store_->search_memory_themes(topics,take) :
+            page_text ? store_->recent_original(topics.front(),offset) :
             view=="observations" ? store_->compare_observations(topics) :
-            view=="comparisons" ? store_->search_cases(topics,take,args.value("offset",std::size_t{})) :
-            view=="knowledge" ? store_->search_knowledge(topics,take) : view=="letters" ? store_->search_letters(topics,take,args.value("offset",std::size_t{})) :
-            view=="understanding" ? store_->search_understandings(topics,take,args.value("offset",std::size_t{})) :
-            view=="tasks" ? store_->search_tasks(topics,take,args.value("offset",std::size_t{})) :
+            view=="comparisons" ? store_->search_cases(topics,take,offset) :
+            view=="knowledge" ? store_->search_knowledge(topics,take) : view=="letters" ? store_->search_letters(topics,take,offset) :
+            view=="understanding" ? store_->search_understandings(topics,take,offset) :
+            view=="tasks" ? store_->search_tasks(topics,take,offset) :
             own ? store_->search_experience(topics,take,view) : store_->search_memory(topics,take,view);
         if (result.is_null()) result={{"items",Json::array()},{"limited",false}};
         if (exact_text && !page_text && result.at("items").empty()) {
@@ -202,7 +226,8 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
             if (!original.is_null()) result=std::move(original);
         }
         const auto size = result.at("items").size();
-        search_result_ = view=="themes" ? theme_source(store_->conversation(),call.attempt.step.run.sequence,result) :
+        search_result_ = document ? knowledge_document_source(topics.front()+"/"+std::to_string(offset),call.attempt.step.run.sequence,result) :
+            view=="themes" ? theme_source(store_->conversation(),call.attempt.step.run.sequence,result) :
             view=="observations" ? observation_source(call.attempt.step.run.sequence,result) :
             view=="comparisons" ? case_source(call.attempt.step.run.sequence,result) :
             view=="knowledge" ? knowledge_source(store_->conversation(),call.attempt.step.run.sequence,result) :
