@@ -8,6 +8,7 @@ set_tests_properties(model.config PROPERTIES TIMEOUT 15)
 dfy_add_unit_test(model.protocol dfy_model_protocol_tests model_protocol.cpp dfy_model nlohmann_json::nlohmann_json)
 
 dfy_add_unit_test(model.messages dfy_model_messages_tests model_messages.cpp dfy_model)
+dfy_add_unit_test(model.embedding_tokens dfy_embedding_token_tests embedding_tokens.cpp dfy_model)
 
 # 验证真实后台模型线程的宿主结算、取消及退出。
 dfy_add_unit_test(model.async dfy_async_model_tests async_model.cpp dfy_model)
